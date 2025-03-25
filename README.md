@@ -10,8 +10,11 @@ RandomPaintingSwap randomly replaces all paintings in the game with images of yo
 
 ### Adding Custom Images
 1. In the `plugins` folder where you placed the `RandomPaintingSwap.dll` file, create a folder named `RandomPaintingSwap_Images`.
-2. Place your images in PNG format inside this folder. These images will be used to randomly replace the paintings in the game.
+2. Place your images inside this folder. These images will be used to randomly replace the paintings in the game.
 
-> ## Other
+#### Images Format
+- `.png` and `.jpg/.jpeg` images are supported.
+
+## Other
 Github: https://github.com/GabziDev/RandomPaintingSwap<br>
 Author: **Gabzdev**
