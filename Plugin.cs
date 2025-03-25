@@ -20,7 +20,6 @@ namespace RandomPaintingSwap
     {
         private const string IMAGE_FOLDER_NAME = "RandomPaintingSwap_Images";
 
-
         public static Plugin Instance { get; private set; }
         internal static new ManualLogSource Logger;
         // Liste des material chargees
@@ -74,11 +73,10 @@ namespace RandomPaintingSwap
             {
                 Directory.CreateDirectory(imagesDirectoryPath);
                 Logger.LogInfo($"Dossier {imagesDirectoryPath} creer avec succes !");
+                return;
             }
-            else
-            {
-                Logger.LogInfo($"Dossier {imagesDirectoryPath} detecte !");
-            }
+
+            Logger.LogInfo($"Dossier {imagesDirectoryPath} detecte !");
         }
 
         /**
@@ -86,50 +84,38 @@ namespace RandomPaintingSwap
          */
         private void LoadImagesFromDirectory()
         {
-            if (Directory.Exists(imagesDirectoryPath))
-            {
-                List<string> imageFiles = new List<string>();
-
-                // Recuperer tout les fichiers avec les patterns
-                foreach (var pattern in imagePatterns)
-                {
-                    imageFiles.AddRange(Directory.GetFiles(imagesDirectoryPath, pattern));
-                }
-
-                if (imageFiles.Any())
-                {
-                    foreach (var imageFile in imageFiles)
-                    {
-                        Texture2D texture = LoadTextureFromFile(imageFile);
-
-                        if (texture != null)
-                        {
-                            // creer le Material avec la texture
-                            Material material = new Material(Shader.Find("Standard"));
-                            material.mainTexture = texture;
-
-                            loadedMaterials.Add(material); // ajout dans la liste
-
-                            string fileName = Path.GetFileNameWithoutExtension(imageFile);
-                            Logger.LogInfo($"Image chargée et Material créé : {fileName}");
-                        }
-                        else
-                        {
-                            Logger.LogWarning($"Erreur chargement image : {imageFile}");
-                        }
-                    }
-
-                    Logger.LogInfo($"Total Images : {imageFiles.Count}");
-                }
-                else
-                {
-                    Logger.LogWarning($"Aucune image trouvee dans le dossier {imagesDirectoryPath}");
-                }
-            }
-            else
+            if (!Directory.Exists(imagesDirectoryPath))
             {
                 Logger.LogWarning($"Le dossier {imagesDirectoryPath} n'existe pas !");
+                return;
             }
+
+            List<string> imageFiles = imagePatterns.SelectMany(pattern => Directory.GetFiles(imagesDirectoryPath, pattern)).ToList();
+
+            if (!imageFiles.Any())
+            {
+                Logger.LogWarning($"Aucune image trouvee dans le dossier {imagesDirectoryPath}");
+                return;
+            }
+
+            foreach (var imageFile in imageFiles)
+            {
+                Texture2D texture = LoadTextureFromFile(imageFile);
+
+                if (texture == null)
+                {
+                    Logger.LogWarning($"Erreur chargement image : {imageFile}");
+                    continue;
+                }
+
+                // creer le Material avec la texture
+                Material material = new Material(Shader.Find("Standard")) { mainTexture = texture };
+                loadedMaterials.Add(material); // ajout dans la liste
+
+                Logger.LogInfo($"Image chargée et Material créé : {Path.GetFileNameWithoutExtension(imageFile)}");
+            }
+
+            Logger.LogInfo($"Total Images : {imageFiles.Count}");
         }
 
         /**
@@ -146,6 +132,7 @@ namespace RandomPaintingSwap
                 return texture;
             }
 
+            texture = null; // clear texture
             return null;
         }
 
@@ -167,34 +154,31 @@ namespace RandomPaintingSwap
                 // Parcours de tous les objects de la scene
                 foreach (GameObject gameObject in list)
                 {
-                    // stocker les MeshRenderer de l'object
-                    MeshRenderer[] componentsInChildren = gameObject.GetComponentsInChildren<MeshRenderer>();
-
                     // Parcours de tous les MeshRenderer de l'object
-                    foreach (MeshRenderer mesh in componentsInChildren)
+                    foreach (MeshRenderer mesh in gameObject.GetComponentsInChildren<MeshRenderer>())
                     {
                         // stocker les materiaux partager du meshrenderer
                         Material[] sharedMaterials = mesh.sharedMaterials;
 
-                        if (sharedMaterials != null)
+                        if (sharedMaterials == null)
                         {
-                            // Parcours de tous les materiaux partager du meshrenderer
-                            for (int i = 0; i < sharedMaterials.Length; i++)
-                            {
-                                if (sharedMaterials[i] == null || !targetMaterials.Contains(sharedMaterials[i].name)) continue;
-
-                                //Logger.LogInfo($"---------------------------> {material.name}");
-                                if (loadedMaterials.Count > 0)
-                                {
-                                    // Appliquer un materiaux custom aleatoire
-                                    int randomIndex = UnityEngine.Random.Range(0, loadedMaterials.Count);
-                                    sharedMaterials[i] = loadedMaterials[randomIndex];
-                                }
-                            }
-
-                            // Appliquer les materiaux custom
-                            mesh.sharedMaterials = sharedMaterials;
+                            continue;
                         }
+
+                        // Parcours de tous les materiaux partager du meshrenderer
+                        for (int i = 0; i < sharedMaterials.Length; i++)
+                        {
+                            Material material = sharedMaterials[i];
+                            if (material != null && targetMaterials.Contains(material.name) && loadedMaterials.Count > 0)
+                            {
+                                //Logger.LogInfo($"---------------------------> {material.name}");
+
+                                sharedMaterials[i] = loadedMaterials[UnityEngine.Random.Range(0, loadedMaterials.Count)];
+                            }
+                        }
+
+                        // Appliquer les materiaux custom
+                        mesh.sharedMaterials = sharedMaterials;
                     }
                 }
             }
