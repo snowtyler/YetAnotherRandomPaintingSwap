@@ -1,4 +1,4 @@
-# RandomPaintingSwap V1.0.0 (R.E.P.O.)
+# RandomPaintingSwap V1.1.0 (R.E.P.O.)
 
 RandomPaintingSwap randomly replaces all paintings in the game with images of your choice. 
 

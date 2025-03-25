@@ -15,7 +15,7 @@ using System.Linq;
 
 namespace RandomPaintingSwap
 {
-    [BepInPlugin("ch.gabzdev.randompaintingswap", "Random Painting Swap", "1.0.0")]
+    [BepInPlugin("ch.gabzdev.randompaintingswap", "Random Painting Swap", "1.1.0")]
     public class Plugin : BaseUnityPlugin
     {
         private const string IMAGE_FOLDER_NAME = "RandomPaintingSwap_Images";
@@ -32,6 +32,13 @@ namespace RandomPaintingSwap
             "Painting_V_Furman",
             "painting teacher02",
             "Painting_S_Tree"
+        };
+        // Paterne fichier image
+        public static readonly HashSet<string> imagePatterns = new HashSet<string>
+        {
+            "*.png",
+            "*.jpg",
+            "*.jpeg"
         };
 
         private readonly Harmony harmony = new Harmony("ch.gabzdev.randompaintingswap");
@@ -81,7 +88,13 @@ namespace RandomPaintingSwap
         {
             if (Directory.Exists(imagesDirectoryPath))
             {
-                var imageFiles = Directory.GetFiles(imagesDirectoryPath, "*.png"); // liste des fichiers .png
+                List<string> imageFiles = new List<string>();
+
+                // Recuperer tout les fichiers avec les patterns
+                foreach (var pattern in imagePatterns)
+                {
+                    imageFiles.AddRange(Directory.GetFiles(imagesDirectoryPath, pattern));
+                }
 
                 if (imageFiles.Any())
                 {
@@ -106,7 +119,7 @@ namespace RandomPaintingSwap
                         }
                     }
 
-                    Logger.LogInfo($"Total Images : {imageFiles.Length}");
+                    Logger.LogInfo($"Total Images : {imageFiles.Count}");
                 }
                 else
                 {
@@ -118,7 +131,6 @@ namespace RandomPaintingSwap
                 Logger.LogWarning($"Le dossier {imagesDirectoryPath} n'existe pas !");
             }
         }
-
 
         /**
          * Charge une texture d'un fichier png en memory
@@ -148,16 +160,9 @@ namespace RandomPaintingSwap
             {
                 Logger.LogInfo("Remplacement des images de base par les images du plugin");
 
-                // Liste de tous les objects de la scene
-                List<GameObject> list = new List<GameObject>();
-
                 Scene activeScene = SceneManager.GetActiveScene();
-                GameObject[] rootGameObjects = activeScene.GetRootGameObjects(); // liste des objects de la scene à la racine de la scene
-
-                foreach (GameObject item in rootGameObjects)
-                {
-                    list.Add(item);
-                }
+                // Liste de tous les objects de la scene
+                List<GameObject> list = activeScene.GetRootGameObjects().ToList();
 
                 // Parcours de tous les objects de la scene
                 foreach (GameObject gameObject in list)
