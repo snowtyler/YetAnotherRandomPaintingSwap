@@ -13,26 +13,41 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using System.Linq;
 
-namespace RandomPaintingSwap
+namespace AnotherRandomPaintingSwap
 {
-    [BepInPlugin("ch.gabzdev.randompaintingswap", "Random Painting Swap", "1.1.0")]
+    [BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.0")]
     public class Plugin : BaseUnityPlugin
     {
         private const string IMAGE_FOLDER_NAME = "RandomPaintingSwap_Images";
 
         public static Plugin Instance { get; private set; }
         internal static new ManualLogSource Logger;
-        // Liste des material chargees
+
         public static List<Material> loadedMaterials = new List<Material>();
-        // Materiaux cibles
         public static readonly HashSet<string> targetMaterials = new HashSet<string>
         {
             "Painting_H_Landscape",
             "Painting_V_Furman",
+            "painting teacher01",
             "painting teacher02",
+            "painting teacher03",
+            "painting teacher04",
             "Painting_S_Tree"
         };
-        // Paterne fichier image
+        public static readonly HashSet<string> targetLandscapeMaterials = new HashSet<string>
+        {
+            "Painting_H_Landscape"
+        };
+        public static readonly HashSet<string> targetPortraitMaterials = new HashSet<string>
+        {
+            "Painting_V_Furman",
+            "painting teacher01",
+            "painting teacher02",
+            "painting teacher03",
+            "painting teacher04",
+            "Painting_S_Tree"
+        };
+        // File extensions
         public static readonly HashSet<string> imagePatterns = new HashSet<string>
         {
             "*.png",
@@ -40,7 +55,7 @@ namespace RandomPaintingSwap
             "*.jpeg"
         };
 
-        private readonly Harmony harmony = new Harmony("ch.gabzdev.randompaintingswap");
+        private readonly Harmony harmony = new Harmony("phnod.anotherrandompaintingswap");
         private string imagesDirectoryPath;
 
         /**
@@ -52,7 +67,7 @@ namespace RandomPaintingSwap
 
             // Plugin startup logic
             Logger = base.Logger;
-            Logger.LogInfo($"Plugin Random Painting Swap is loaded!");
+            Logger.LogInfo($"Plugin Another Random Painting Swap is loaded!");
 
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -60,9 +75,6 @@ namespace RandomPaintingSwap
             LoadImagesFromDirectory();
         }
 
-        /**
-         * Cree un dossier "IMAGE_FOLDER_NAME" si n'existe pas
-         */
         private void CreateImagesDirectory()
         {
             string pluginDirectory = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
@@ -72,21 +84,18 @@ namespace RandomPaintingSwap
             if (!Directory.Exists(imagesDirectoryPath))
             {
                 Directory.CreateDirectory(imagesDirectoryPath);
-                Logger.LogInfo($"Dossier {imagesDirectoryPath} creer avec succes !");
+                Logger.LogInfo($"Folder [{imagesDirectoryPath}] created successfully!");
                 return;
             }
 
-            Logger.LogInfo($"Dossier {imagesDirectoryPath} detecte !");
+            Logger.LogInfo($"Folder [{imagesDirectoryPath}] detected!");
         }
 
-        /**
-         * Charge les images du dossier "IMAGE_FOLDER_NAME"
-         */
         private void LoadImagesFromDirectory()
         {
             if (!Directory.Exists(imagesDirectoryPath))
             {
-                Logger.LogWarning($"Le dossier {imagesDirectoryPath} n'existe pas !");
+                Logger.LogWarning($"The folder [{imagesDirectoryPath}] does not exist!");
                 return;
             }
 
@@ -94,7 +103,7 @@ namespace RandomPaintingSwap
 
             if (!imageFiles.Any())
             {
-                Logger.LogWarning($"Aucune image trouvee dans le dossier {imagesDirectoryPath}");
+                Logger.LogWarning($"No images found in the folder [{imagesDirectoryPath}]");
                 return;
             }
 
@@ -104,23 +113,20 @@ namespace RandomPaintingSwap
 
                 if (texture == null)
                 {
-                    Logger.LogWarning($"Erreur chargement image : {imageFile}");
+                    Logger.LogWarning($"Error loading image : [{imageFile}]");
                     continue;
                 }
 
-                // creer le Material avec la texture
                 Material material = new Material(Shader.Find("Standard")) { mainTexture = texture };
-                loadedMaterials.Add(material); // ajout dans la liste
+                loadedMaterials.Add(material);
 
-                Logger.LogInfo($"Image chargée et Material créé : {Path.GetFileNameWithoutExtension(imageFile)}");
+                string filename = Path.GetFileName(imageFile);
+                Logger.LogInfo($"Created Material for loaded image : {filename}");
             }
 
-            Logger.LogInfo($"Total Images : {imageFiles.Count}");
+            Logger.LogInfo($"Total Images : [{imageFiles.Count}]");
         }
 
-        /**
-         * Charge une texture d'un fichier png en memory
-         */
         private Texture2D LoadTextureFromFile(string filePath)
         {
             byte[] fileData = File.ReadAllBytes(filePath);
@@ -141,34 +147,30 @@ namespace RandomPaintingSwap
         {
             [HarmonyPostfix]
             /**
-             * Remplacement des images de base par les images du plugin
+             * Replacing base images with plugin images
              */
             private static void Postfix()
             {
-                Logger.LogInfo("Remplacement des images de base par les images du plugin");
+                Logger.LogInfo("Replacing base images with plugin images");
 
-                Scene activeScene = SceneManager.GetActiveScene();
-                // Liste de tous les objects de la scene
-                List<GameObject> list = activeScene.GetRootGameObjects().ToList();
+                var activeScene = SceneManager.GetActiveScene();
+                // All game objects
+                var gameObjectList = activeScene.GetRootGameObjects().ToList();
 
-                // Parcours de tous les objects de la scene
-                foreach (GameObject gameObject in list)
+                foreach (var gameObject in gameObjectList)
                 {
-                    // Parcours de tous les MeshRenderer de l'object
-                    foreach (MeshRenderer mesh in gameObject.GetComponentsInChildren<MeshRenderer>())
+                    foreach (var meshRenderer in gameObject.GetComponentsInChildren<MeshRenderer>())
                     {
-                        // stocker les materiaux partager du meshrenderer
-                        Material[] sharedMaterials = mesh.sharedMaterials;
+                        var sharedMaterials = meshRenderer.sharedMaterials;
 
                         if (sharedMaterials == null)
                         {
                             continue;
                         }
 
-                        // Parcours de tous les materiaux partager du meshrenderer
                         for (int i = 0; i < sharedMaterials.Length; i++)
                         {
-                            Material material = sharedMaterials[i];
+                            var material = sharedMaterials[i];
                             if (material != null && targetMaterials.Contains(material.name) && loadedMaterials.Count > 0)
                             {
                                 //Logger.LogInfo($"---------------------------> {material.name}");
@@ -177,8 +179,7 @@ namespace RandomPaintingSwap
                             }
                         }
 
-                        // Appliquer les materiaux custom
-                        mesh.sharedMaterials = sharedMaterials;
+                        meshRenderer.sharedMaterials = sharedMaterials;
                     }
                 }
             }

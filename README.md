@@ -16,5 +16,8 @@ RandomPaintingSwap randomly replaces all paintings in the game with images of yo
 - `.png` and `.jpg/.jpeg` images are supported.
 
 ## Other
+Github: https://github.com/Phnod/AnotherRandomPaintingSwap
+Author: **Phnod**
+Forked from (Who did most of the work)
 Github: https://github.com/GabziDev/RandomPaintingSwap<br>
 Author: **Gabzdev**
