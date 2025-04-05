@@ -20,20 +20,9 @@ namespace AnotherRandomPaintingSwap
     {
         private const string IMAGE_FOLDER_NAME = "RandomPaintingSwap_Images";
 
-        public static Plugin Instance { get; private set; }
-        internal static new ManualLogSource Logger;
+        private const string IMAGE_LANDSCAPE_FOLDER_NAME = "RandomLandscapePaintingSwap_Images";
+        private const string IMAGE_PORTRAIT_FOLDER_NAME  = "RandomPortraitPaintingSwap_Images";
 
-        public static List<Material> loadedMaterials = new List<Material>();
-        public static readonly HashSet<string> targetMaterials = new HashSet<string>
-        {
-            "Painting_H_Landscape",
-            "Painting_V_Furman",
-            "painting teacher01",
-            "painting teacher02",
-            "painting teacher03",
-            "painting teacher04",
-            "Painting_S_Tree"
-        };
         public static readonly HashSet<string> targetLandscapeMaterials = new HashSet<string>
         {
             "Painting_H_Landscape"
@@ -47,6 +36,37 @@ namespace AnotherRandomPaintingSwap
             "painting teacher04",
             "Painting_S_Tree"
         };
+
+        // Defines groups of paintings depending on their dimensions, allowing to split landscape and portraits
+        public class PaintingGroup
+        {
+            //public PaintingType paintingType;
+            public string paintingType;
+            public string paintingFolderName;
+            public HashSet<string> targetMaterials;
+            public List<Material> loadedMaterials;
+
+            public PaintingGroup(string InPaintingType, string InPaintingFolderName, HashSet<string> InTargetMaterials)
+            {
+                paintingType       = InPaintingType;
+                paintingFolderName = InPaintingFolderName;
+                targetMaterials    = InTargetMaterials;
+                loadedMaterials = new List<Material>();
+            }
+        }
+
+        public static List<PaintingGroup> paintingGroups;
+
+        public static Plugin Instance { get; private set; }
+        internal static new ManualLogSource Logger;
+
+        static Plugin()
+        {
+            paintingGroups = new List<PaintingGroup>();
+            paintingGroups.Add(new PaintingGroup("Landscape", IMAGE_LANDSCAPE_FOLDER_NAME, targetLandscapeMaterials));
+            paintingGroups.Add(new PaintingGroup("Portrait" , IMAGE_PORTRAIT_FOLDER_NAME , targetPortraitMaterials ));
+        }
+
         // File extensions
         public static readonly HashSet<string> imagePatterns = new HashSet<string>
         {
@@ -56,7 +76,6 @@ namespace AnotherRandomPaintingSwap
         };
 
         private readonly Harmony harmony = new Harmony("phnod.anotherrandompaintingswap");
-        private string imagesDirectoryPath;
 
         /**
          * Init Plugin
@@ -71,44 +90,59 @@ namespace AnotherRandomPaintingSwap
 
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-            CreateImagesDirectory();
-            LoadImagesFromDirectory();
+            LoadImagesFromAllPlugins();
         }
 
-        private void CreateImagesDirectory()
+        private void LoadImagesFromAllPlugins()
         {
-            string pluginDirectory = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-
-            imagesDirectoryPath = Path.Combine(pluginDirectory, IMAGE_FOLDER_NAME);
-
-            if (!Directory.Exists(imagesDirectoryPath))
+            var pluginDir = Path.Combine(Paths.PluginPath);
+            if (!Directory.Exists(pluginDir))
             {
-                Directory.CreateDirectory(imagesDirectoryPath);
-                Logger.LogInfo($"Folder [{imagesDirectoryPath}] created successfully!");
+                Logger.LogWarning($"Plugins directory not found: [{pluginDir}]");
                 return;
             }
 
-            Logger.LogInfo($"Folder [{imagesDirectoryPath}] detected!");
+            foreach (var paintingGroup in paintingGroups)
+            {
+                var folderName = paintingGroup.paintingFolderName;
+                string[] directories = Directory.GetDirectories(pluginDir, folderName, SearchOption.AllDirectories);
+                if (directories.Length == 0)
+                {
+                    Logger.LogWarning($"No 'CustomPaintings' folders found in plugins.");
+                    return;
+                }
+                string[] array = directories;
+                foreach (string dirStr in array)
+                {
+                    Logger.LogInfo($"Loading images from: [{dirStr}]");
+                    LoadImagesFromDirectory(paintingGroup, dirStr);
+                }
+            }
         }
 
-        private void LoadImagesFromDirectory()
+
+        private void LoadImagesFromDirectory(PaintingGroup InPaintingGroup, string directoryPath)
         {
-            if (!Directory.Exists(imagesDirectoryPath))
+            string paintingType = InPaintingGroup.paintingType;
+
+            if (!Directory.Exists(directoryPath))
             {
-                Logger.LogWarning($"The folder [{imagesDirectoryPath}] does not exist!");
+                Logger.LogWarning($"The folder [{directoryPath}] does not exist!");
                 return;
             }
 
-            List<string> imageFiles = imagePatterns.SelectMany(pattern => Directory.GetFiles(imagesDirectoryPath, pattern)).ToList();
+            Logger.LogInfo($"Selecting image patterns for group [{paintingType}] for files : {directoryPath}");
+            List<string> imageFiles = imagePatterns.SelectMany(pattern => Directory.GetFiles(directoryPath, pattern)).ToList();
 
             if (!imageFiles.Any())
             {
-                Logger.LogWarning($"No images found in the folder [{imagesDirectoryPath}]");
+                Logger.LogWarning($"No images found in the folder [{directoryPath}]");
                 return;
             }
 
             foreach (var imageFile in imageFiles)
             {
+                string filename = Path.GetFileName(imageFile);
                 Texture2D texture = LoadTextureFromFile(imageFile);
 
                 if (texture == null)
@@ -118,13 +152,12 @@ namespace AnotherRandomPaintingSwap
                 }
 
                 Material material = new Material(Shader.Find("Standard")) { mainTexture = texture };
-                loadedMaterials.Add(material);
+                InPaintingGroup.loadedMaterials.Add(material);
 
-                string filename = Path.GetFileName(imageFile);
-                Logger.LogInfo($"Created Material for loaded image : {filename}");
+                Logger.LogInfo($"Created Material for group [{paintingType}] for loaded image : {filename}");
             }
 
-            Logger.LogInfo($"Total Images : [{imageFiles.Count}]");
+            Logger.LogInfo($"Total Images for group [{paintingType}] : [{imageFiles.Count}]");
         }
 
         private Texture2D LoadTextureFromFile(string filePath)
@@ -132,14 +165,14 @@ namespace AnotherRandomPaintingSwap
             byte[] fileData = File.ReadAllBytes(filePath);
             Texture2D texture = new Texture2D(2, 2);
 
-            if (texture.LoadImage(fileData))
+            if (!texture.LoadImage(fileData))
             {
-                texture.Apply();
-                return texture;
+                texture = null; // clear texture
+                return null;
             }
 
-            texture = null; // clear texture
-            return null;
+            texture.Apply();
+            return texture;
         }
 
         [HarmonyPatch(typeof(LoadingUI), "LevelAnimationComplete")]
@@ -170,16 +203,21 @@ namespace AnotherRandomPaintingSwap
 
                         for (int i = 0; i < sharedMaterials.Length; i++)
                         {
-                            var material = sharedMaterials[i];
-                            if (material != null && targetMaterials.Contains(material.name) && loadedMaterials.Count > 0)
+                            foreach (var paintingGroup in paintingGroups)
                             {
-                                //Logger.LogInfo($"---------------------------> {material.name}");
+                                var material = sharedMaterials[i];
+                                if (material != null && paintingGroup.targetMaterials.Contains(material.name) && paintingGroup.loadedMaterials.Count > 0)
+                                {
+                                    Logger.LogInfo($"---------------------------> {material.name}");
 
-                                sharedMaterials[i] = loadedMaterials[UnityEngine.Random.Range(0, loadedMaterials.Count)];
+                                    var randomPaintingIndex = UnityEngine.Random.Range(0, paintingGroup.loadedMaterials.Count);
+                                    sharedMaterials[i] = paintingGroup.loadedMaterials[randomPaintingIndex];
+                                    Logger.LogInfo($"---------------------------> {paintingGroup.loadedMaterials[randomPaintingIndex]}");
+                                }
                             }
-                        }
 
-                        meshRenderer.sharedMaterials = sharedMaterials;
+                            meshRenderer.sharedMaterials = sharedMaterials;
+                        }
                     }
                 }
             }
