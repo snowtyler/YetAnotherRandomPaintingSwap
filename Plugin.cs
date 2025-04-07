@@ -12,46 +12,65 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using System.Linq;
+using RandomPaintingSwap;
+using static AnotherRandomPaintingSwap.Plugin;
 
 namespace AnotherRandomPaintingSwap;
 
-[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.0")]
+[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.1")]
 public class Plugin : BaseUnityPlugin
 {
-    private const string IMAGE_FOLDER_NAME = "RandomPaintingSwap_Images";
-
     private const string IMAGE_LANDSCAPE_FOLDER_NAME = "RandomLandscapePaintingSwap_Images";
+    private const string IMAGE_SQUARE_FOLDER_NAME    = "RandomSquarePaintingSwap_Images";
     private const string IMAGE_PORTRAIT_FOLDER_NAME  = "RandomPortraitPaintingSwap_Images";
 
-    public static readonly HashSet<string> targetLandscapeMaterials = new HashSet<string>
+    public static readonly HashSet<string> whitelistLandscapeMaterials = new HashSet<string>
     {
-        "Painting_H_Landscape"
+        "Painting_H_Landscape",
+        "Painting_H_crow",
+        "Painting_H_crow_0",
     };
-    public static readonly HashSet<string> targetPortraitMaterials = new HashSet<string>
+
+    // Todo: filter all that begin with Painting_S_ as squares and so on?
+    // Painting_S_Tree is actually a portrait though (Could be done with a blacklist)
+    // Could possibly go through materials initially, grow hashmap of paintings and not paintings for faster sequential matches
+    public static readonly HashSet<string> whitelistSquareMaterials = new HashSet<string>
     {
+        "Painting_S_Creep",
+        "Painting_S_Creep 2_0",
+        "Painting_S_Creep 2",
+        "Painting Wizard Class",
+    };
+
+    public static readonly HashSet<string> whitelistPortraitMaterials = new HashSet<string>
+    {
+        "Painting_V_jannk",
         "Painting_V_Furman",
+        "Painting_V_surrealistic",
+        "Painting_V_surrealistic_0",
         "painting teacher01",
         "painting teacher02",
         "painting teacher03",
         "painting teacher04",
-        "Painting_S_Tree"
+        "Painting_S_Tree",
     };
 
     // Defines groups of paintings depending on their dimensions, allowing to split landscape and portraits
     public class PaintingGroup
     {
-        //public PaintingType paintingType;
         public string paintingType;
         public string paintingFolderName;
-        public HashSet<string> targetMaterials;
+        public HashSet<string> whitelistMaterials;
         public List<Material> loadedMaterials;
+        public List<string>   loadedTextureNames;
 
-        public PaintingGroup(string InPaintingType, string InPaintingFolderName, HashSet<string> InTargetMaterials)
+        public PaintingGroup(string InPaintingType, string InPaintingFolderName, HashSet<string> InWhitelistMaterials)
         {
             paintingType       = InPaintingType;
             paintingFolderName = InPaintingFolderName;
-            targetMaterials    = InTargetMaterials;
-            loadedMaterials = new List<Material>();
+            whitelistMaterials = InWhitelistMaterials;
+            loadedMaterials    = new List<Material>();
+            loadedTextureNames = new List<string>();
         }
     }
 
@@ -62,9 +81,12 @@ public class Plugin : BaseUnityPlugin
 
     static Plugin()
     {
-        paintingGroups = new List<PaintingGroup>();
-        paintingGroups.Add(new PaintingGroup("Landscape", IMAGE_LANDSCAPE_FOLDER_NAME, targetLandscapeMaterials));
-        paintingGroups.Add(new PaintingGroup("Portrait" , IMAGE_PORTRAIT_FOLDER_NAME , targetPortraitMaterials ));
+        paintingGroups = new List<PaintingGroup>()
+        {
+            new PaintingGroup("Landscape", IMAGE_LANDSCAPE_FOLDER_NAME, whitelistLandscapeMaterials),
+            new PaintingGroup("Square"   , IMAGE_SQUARE_FOLDER_NAME   , whitelistSquareMaterials),
+            new PaintingGroup("Portrait" , IMAGE_PORTRAIT_FOLDER_NAME , whitelistPortraitMaterials)
+        };
     }
 
     // File extensions
@@ -88,7 +110,9 @@ public class Plugin : BaseUnityPlugin
         Logger = base.Logger;
         Logger.LogInfo($"Plugin Another Random Painting Swap is loaded!");
 
+        PluginConfig.Init(Config);
         harmony.PatchAll(Assembly.GetExecutingAssembly());
+        DebugLog($"DebugLog enabled. Expect bad loading performance");
 
         LoadImagesFromAllPlugins();
     }
@@ -153,6 +177,7 @@ public class Plugin : BaseUnityPlugin
 
             Material material = new Material(Shader.Find("Standard")) { mainTexture = texture };
             InPaintingGroup.loadedMaterials.Add(material);
+            InPaintingGroup.loadedTextureNames.Add(filename);
 
             Logger.LogInfo($"Created Material for group [{paintingType}] for loaded image : {filename}");
         }
@@ -189,9 +214,12 @@ public class Plugin : BaseUnityPlugin
             var activeScene = SceneManager.GetActiveScene();
             // All game objects
             var gameObjectList = activeScene.GetRootGameObjects().ToList();
+            DebugLog($"gameObjectList Size: [{gameObjectList.Count}]");
 
             foreach (var gameObject in gameObjectList)
             {
+                //DebugLog($"Checking game object [{gameObject.name}]");
+
                 foreach (var meshRenderer in gameObject.GetComponentsInChildren<MeshRenderer>())
                 {
                     var sharedMaterials = meshRenderer.sharedMaterials;
@@ -206,14 +234,33 @@ public class Plugin : BaseUnityPlugin
                         foreach (var paintingGroup in paintingGroups)
                         {
                             var material = sharedMaterials[i];
-                            if (material != null && paintingGroup.targetMaterials.Contains(material.name) && paintingGroup.loadedMaterials.Count > 0)
-                            {
-                                Logger.LogInfo($"---------------------------> {material.name}");
+                            if (material == null)
+                            { continue; }
 
-                                var randomPaintingIndex = UnityEngine.Random.Range(0, paintingGroup.loadedMaterials.Count);
-                                sharedMaterials[i] = paintingGroup.loadedMaterials[randomPaintingIndex];
-                                Logger.LogInfo($"---------------------------> {paintingGroup.loadedMaterials[randomPaintingIndex]}");
+                            if (!paintingGroup.whitelistMaterials.Contains(material.name))
+                            {
+                                //DebugLog($"[{material.name}] does not contain whitelist match for [{paintingGroup.paintingType}].");
+                                continue;
                             }
+                            //DebugLog($"[{material.name}] does contain whitelist match for [{paintingGroup.paintingType}].");
+
+                            if (paintingGroup.loadedMaterials.Count <= 0)
+                            { continue; }
+
+                            float rand = UnityEngine.Random.Range(0.0f, 1.0f);
+                            if (rand > PluginConfig.customPaintingChance.Value)
+                            {
+                                //DebugLog($"[{material.name}] will not be replaced by a [{paintingGroup.paintingType}]. Random Probability - [{rand}]");
+                                continue;
+                            }
+                            //DebugLog($"[{material.name}] will be replaced by a [{paintingGroup.paintingType}].");
+
+
+                            var randomPaintingIndex = UnityEngine.Random.Range(0, paintingGroup.loadedMaterials.Count);
+                            sharedMaterials[i] = paintingGroup.loadedMaterials[randomPaintingIndex];
+
+                            Logger.LogInfo($"Found ------------> [{material.name}] with texture [{material.mainTexture.name}]");
+                            Logger.LogInfo($"Converted to -----> [{paintingGroup.loadedTextureNames[randomPaintingIndex]}]");
                         }
 
                         meshRenderer.sharedMaterials = sharedMaterials;
@@ -221,5 +268,13 @@ public class Plugin : BaseUnityPlugin
                 }
             }
         }
+    }
+
+    public static void DebugLog(string InMessage)
+    {
+        if (!PluginConfig.enableDebugLog.Value)
+        { return; }
+
+        Logger.LogInfo(InMessage);
     }
 }
