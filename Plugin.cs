@@ -17,7 +17,7 @@ using static AnotherRandomPaintingSwap.Plugin;
 
 namespace AnotherRandomPaintingSwap;
 
-[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.1")]
+[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.2")]
 public class Plugin : BaseUnityPlugin
 {
     private const string IMAGE_LANDSCAPE_FOLDER_NAME = "RandomLandscapePaintingSwap_Images";
