@@ -17,13 +17,20 @@ using static AnotherRandomPaintingSwap.Plugin;
 
 namespace AnotherRandomPaintingSwap;
 
-[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.2")]
+[BepInPlugin("phnod.randompaintingswap", "Another Random Painting Swap", "1.0.3")]
 public class Plugin : BaseUnityPlugin
 {
     private const string IMAGE_LANDSCAPE_FOLDER_NAME = "RandomLandscapePaintingSwap_Images";
     private const string IMAGE_SQUARE_FOLDER_NAME    = "RandomSquarePaintingSwap_Images";
     private const string IMAGE_PORTRAIT_FOLDER_NAME  = "RandomPortraitPaintingSwap_Images";
 
+    private const string MATERIAL_LANDSCAPE_ASSET_NAME = "GrungeHorizontalMaterial";
+    private const string MATERIAL_PORTRAIT_ASSET_NAME  = "GrungeVerticalMaterial";
+
+    static Material _LandscapeMaterial;
+    static Material _PortraitMaterial;
+
+    // These are 2x1
     public static readonly HashSet<string> whitelistLandscapeMaterials = new HashSet<string>
     {
         "Painting_H_Landscape",
@@ -37,11 +44,12 @@ public class Plugin : BaseUnityPlugin
     public static readonly HashSet<string> whitelistSquareMaterials = new HashSet<string>
     {
         "Painting_S_Creep",
-        "Painting_S_Creep 2_0",
-        "Painting_S_Creep 2",
+        //"Painting_S_Creep 2_0", // These paintings are stretched a little bit, about 1.1x taller than wide
+        //"Painting_S_Creep 2",
         "Painting Wizard Class",
     };
 
+    // Most of these are 5x7 I think
     public static readonly HashSet<string> whitelistPortraitMaterials = new HashSet<string>
     {
         "Painting_V_jannk",
@@ -61,8 +69,9 @@ public class Plugin : BaseUnityPlugin
         public string paintingType;
         public string paintingFolderName;
         public HashSet<string> whitelistMaterials;
-        public List<Material> loadedMaterials;
-        public List<string>   loadedTextureNames;
+        public List<Material>  loadedMaterials;
+        public List<string>    loadedTextureNames;
+        public Material        baseMaterial = null;
 
         public PaintingGroup(string InPaintingType, string InPaintingFolderName, HashSet<string> InWhitelistMaterials)
         {
@@ -114,7 +123,77 @@ public class Plugin : BaseUnityPlugin
         harmony.PatchAll(Assembly.GetExecutingAssembly());
         DebugLog($"DebugLog enabled. Expect bad loading performance");
 
+        if (PluginConfig.Grunge.enableGrunge.Value)
+        {
+            AssignMaterialGroups();
+        }
+
         LoadImagesFromAllPlugins();
+    }
+
+    private void AssignMaterialGroups()
+    {
+        string location = Assembly.GetExecutingAssembly().Location;
+        string directoryName = Path.GetDirectoryName(location);
+        //string assetName = "AnotherRandomPaintingSwap";
+        string assetName = "painting";
+        string assetLocation = Path.Combine(directoryName, assetName);
+        Logger.LogInfo($"Loading [{assetLocation}]");
+        bool assetBundleExists = File.Exists(assetLocation);
+        if (assetBundleExists)
+        {
+            Logger.LogInfo($"Asset Bundle exists");
+        }
+        else
+        {
+            Logger.LogWarning($"Asset Bundle doesn't exist");
+
+        }
+
+        AssetBundle assBundle = AssetBundle.LoadFromFile(assetLocation);
+
+        if (assBundle == null)
+        {
+            Logger.LogError($"Failed to load [{assetName}]");
+        }
+        else
+        {
+            _LandscapeMaterial = assBundle.LoadAsset<Material>(MATERIAL_LANDSCAPE_ASSET_NAME);
+            if (_LandscapeMaterial == null)
+            {
+                Logger.LogError($"Could not load landscape painting material [{MATERIAL_LANDSCAPE_ASSET_NAME}]!");
+            }
+            _PortraitMaterial = assBundle.LoadAsset<Material>(MATERIAL_PORTRAIT_ASSET_NAME);
+            if (_PortraitMaterial == null)
+            {
+                Logger.LogError($"Could not load portrait painting material [{MATERIAL_PORTRAIT_ASSET_NAME}]!");
+            }
+        }
+
+        foreach (var paintingGroup in paintingGroups)
+        {
+            var paintingType = paintingGroup.paintingType;
+            if (paintingType == "Portrait")
+            {
+                paintingGroup.baseMaterial = _PortraitMaterial;
+            }
+            else // Square paintings can use the same material as landscape paintings
+            {
+                paintingGroup.baseMaterial = _LandscapeMaterial;
+            }
+
+            if (paintingGroup.baseMaterial == null)
+            {
+                Logger.LogWarning($"No base material found for [{paintingType}]!");
+                continue; 
+            }
+
+            paintingGroup.baseMaterial.SetColor(PluginConfig.Grunge._BaseColor.Definition.Key, PluginConfig.Grunge._BaseColor.Value);
+            paintingGroup.baseMaterial.SetColor(PluginConfig.Grunge._MainColor.Definition.Key, PluginConfig.Grunge._MainColor.Value);
+            paintingGroup.baseMaterial.SetColor(PluginConfig.Grunge._CracksColor.Definition.Key, PluginConfig.Grunge._CracksColor.Value);
+            paintingGroup.baseMaterial.SetColor(PluginConfig.Grunge._OutlineColor.Definition.Key, PluginConfig.Grunge._OutlineColor.Value);
+            paintingGroup.baseMaterial.SetFloat(PluginConfig.Grunge._CracksPower.Definition.Key, PluginConfig.Grunge._CracksPower.Value);
+        }
     }
 
     private void LoadImagesFromAllPlugins()
@@ -143,7 +222,6 @@ public class Plugin : BaseUnityPlugin
             }
         }
     }
-
 
     private void LoadImagesFromDirectory(PaintingGroup InPaintingGroup, string directoryPath)
     {
@@ -175,7 +253,18 @@ public class Plugin : BaseUnityPlugin
                 continue;
             }
 
-            Material material = new Material(Shader.Find("Standard")) { mainTexture = texture };
+            Material paintingGroupMaterial = InPaintingGroup.baseMaterial;
+            Material material;
+            if (paintingGroupMaterial == null)
+            {
+                material = new Material(Shader.Find("Standard")) { mainTexture = texture };
+            }
+            else
+            {
+                material = new Material(paintingGroupMaterial);
+                material.SetTexture("_MainTex", texture);
+            }
+
             InPaintingGroup.loadedMaterials.Add(material);
             InPaintingGroup.loadedTextureNames.Add(filename);
 
@@ -250,7 +339,7 @@ public class Plugin : BaseUnityPlugin
                             float rand = UnityEngine.Random.Range(0.0f, 1.0f);
                             if (rand > PluginConfig.customPaintingChance.Value)
                             {
-                                //DebugLog($"[{material.name}] will not be replaced by a [{paintingGroup.paintingType}]. Random Probability - [{rand}]");
+                                Logger.LogInfo($"[{material.name}] will not be replaced by a [{paintingGroup.paintingType}]. Random Probability - [{rand}]");
                                 continue;
                             }
                             //DebugLog($"[{material.name}] will be replaced by a [{paintingGroup.paintingType}].");
