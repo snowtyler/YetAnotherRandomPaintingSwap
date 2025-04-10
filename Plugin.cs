@@ -17,10 +17,10 @@ using Photon.Realtime;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace FittingPaintings
+namespace YetAnotherRandomPaintingSwap
 {
-    [BepInPlugin("ZeroTails.FittingPaintings", "FittingPaintings", "1.1.0")]
-    public class FittingPaintings : BaseUnityPlugin
+    [BepInPlugin("snowtyler.YetAnotherRandomPaintingSwap", "YetAnotherRandomPaintingSwap", "1.1.0")]
+    public class YetAnotherRandomPaintingSwap : BaseUnityPlugin
     {
         public class PaintingGroup
         {
@@ -55,7 +55,7 @@ namespace FittingPaintings
                     if (receivedSeed.HasValue)
                     {
                         logger.LogInfo($"[Postfix] Client using received seed: {receivedSeed.Value}");
-                        FittingPaintingsSwap.ReceivedSeed = receivedSeed.Value;
+                        YetAnotherRandomPaintingSwapSwap.ReceivedSeed = receivedSeed.Value;
                         receivedSeed = null;
                     }
                     else
@@ -68,16 +68,16 @@ namespace FittingPaintings
 
             private static void Prefix()
             {
-                if (swapper.GetModState() == FittingPaintingsSwap.ModState.Client)
+                if (swapper.GetModState() == YetAnotherRandomPaintingSwapSwap.ModState.Client)
                 {
                     PhotonNetwork.AddCallbackTarget(sync);
                 }
-                if (swapper.GetModState() == FittingPaintingsSwap.ModState.Host)
+                if (swapper.GetModState() == YetAnotherRandomPaintingSwapSwap.ModState.Host)
                 {
-                    FittingPaintingsSwap.HostSeed = UnityEngine.Random.Range(0, int.MaxValue);
-                    logger.LogInfo($"Generated Hostseed: {FittingPaintingsSwap.HostSeed}");
+                    YetAnotherRandomPaintingSwapSwap.HostSeed = UnityEngine.Random.Range(0, int.MaxValue);
+                    logger.LogInfo($"Generated Hostseed: {YetAnotherRandomPaintingSwapSwap.HostSeed}");
                     PhotonNetwork.AddCallbackTarget(sync);
-                    sync.SendSeed(FittingPaintingsSwap.HostSeed);
+                    sync.SendSeed(YetAnotherRandomPaintingSwapSwap.HostSeed);
                 }
             }
         }
@@ -88,9 +88,9 @@ namespace FittingPaintings
             private static void Prefix()
             {
                 logger.LogInfo("JoinLobbyPatch Prefix called.");
-                if (swapper.GetModState() == FittingPaintingsSwap.ModState.SinglePlayer)
+                if (swapper.GetModState() == YetAnotherRandomPaintingSwapSwap.ModState.SinglePlayer)
                 {
-                    swapper.SetState(FittingPaintingsSwap.ModState.Client);
+                    swapper.SetState(YetAnotherRandomPaintingSwapSwap.ModState.Client);
                 }
             }
         }
@@ -103,7 +103,7 @@ namespace FittingPaintings
                 logger.LogInfo("HostLobbyPatch Prefix called.");
                 if (swapper.GetModState() != 0)
                 {
-                    swapper.SetState(FittingPaintingsSwap.ModState.Host);
+                    swapper.SetState(YetAnotherRandomPaintingSwapSwap.ModState.Host);
                 }
                 return true;
             }
@@ -115,32 +115,32 @@ namespace FittingPaintings
             private static void Postfix()
             {
                 PhotonNetwork.RemoveCallbackTarget(sync);
-                swapper.SetState(FittingPaintingsSwap.ModState.SinglePlayer);
+                swapper.SetState(YetAnotherRandomPaintingSwapSwap.ModState.SinglePlayer);
             }
         }
 
         public static List<PaintingGroup> paintingGroups = new List<PaintingGroup>
         {
-            new PaintingGroup("Landscape", "FittingSwapLandscapePaintings", new HashSet<string> { "Painting_H_Landscape" }),
-            new PaintingGroup("Portrait", "FittingSwapPortraitPaintings", new HashSet<string> { "Painting_V_Furman", "painting teacher01", "painting teacher02", "painting teacher03", "painting teacher04", "Painting_S_Tree" }),
-            new PaintingGroup("Square", "FittingSwapSquarePaintings", new HashSet<string> { "Painting_S_Creep", "Painting_S_Creep 2_0", "Painting_S_Creep 2", "Painting Wizard Class" })
+            new PaintingGroup("Landscape", "RandomLandscapePaintingSwap_Images", new HashSet<string> { "Painting_H_Landscape" }),
+            new PaintingGroup("Portrait", "RandomPortraitPaintingSwap_Images", new HashSet<string> { "Painting_V_Furman", "painting teacher01", "painting teacher02", "painting teacher03", "painting teacher04", "Painting_S_Tree" }),
+            new PaintingGroup("Square", "RandomSquarePaintingSwap_Images", new HashSet<string> { "Painting_S_Creep", "Painting_S_Creep 2_0", "Painting_S_Creep 2", "Painting Wizard Class" })
         };
 
         private static Logger logger = null;
-        private static FittingPaintingsLoader loader = null;
-        private static FittingPaintingsSwap swapper = null;
-        private static FittingPaintingsSync sync = null;
+        private static YetAnotherRandomPaintingSwapLoader loader = null;
+        private static YetAnotherRandomPaintingSwapSwap swapper = null;
+        private static YetAnotherRandomPaintingSwapSync sync = null;
         private static GrungeMaterialManager grungeMaterialManager = null;
 
         public static int? receivedSeed = null;
         public static readonly int maxWaitTimeMs = 3000;
 
-        private readonly Harmony harmony = new Harmony("ZeroTails.FittingPaintings");
+        private readonly Harmony harmony = new Harmony("snowtyler.YetAnotherRandomPaintingSwap");
 
         private void Awake()
         {
-            logger = new Logger("FittingPaintings");
-            logger.LogInfo("FittingPaintings mod initialized.");
+            logger = new Logger("YetAnotherRandomPaintingSwap");
+            logger.LogInfo("YetAnotherRandomPaintingSwap mod initialized.");
             
             // Initialize configuration
             PluginConfig.Init(Config);
@@ -155,11 +155,11 @@ namespace FittingPaintings
             }
             
             // Initialize loader with grunge manager
-            loader = new FittingPaintingsLoader(logger, grungeMaterialManager);
+            loader = new YetAnotherRandomPaintingSwapLoader(logger, grungeMaterialManager);
             loader.LoadImagesFromAllPlugins();
             
-            swapper = new FittingPaintingsSwap(logger, loader);
-            sync = new FittingPaintingsSync(logger);
+            swapper = new YetAnotherRandomPaintingSwapSwap(logger, loader);
+            sync = new YetAnotherRandomPaintingSwapSync(logger);
             
             harmony.PatchAll();
             
@@ -244,7 +244,7 @@ namespace FittingPaintings
 
             Grunge._CracksPower = config.Bind(
                 "Grunge",
-                "_GrungeCracksPow",
+                "_GrungeCracksPower",
                 1.0f,
                 "The inverse of intensity of the cracks. 1.0 will have plenty of cracks, higher numbers will have less cracks (Values below 1.0 will start to look bad)"
             );
@@ -341,7 +341,7 @@ namespace FittingPaintings
         }
     }
 
-    public class FittingPaintingsLoader
+    public class YetAnotherRandomPaintingSwapLoader
     {
         private readonly Logger logger;
         private readonly GrungeMaterialManager grungeMaterialManager;
@@ -349,7 +349,7 @@ namespace FittingPaintings
 
         public List<Material> LoadedMaterials { get; } = new List<Material>();
 
-        public FittingPaintingsLoader(Logger logger, GrungeMaterialManager grungeMaterialManager)
+        public YetAnotherRandomPaintingSwapLoader(Logger logger, GrungeMaterialManager grungeMaterialManager)
         {
             this.logger = logger;
             this.grungeMaterialManager = grungeMaterialManager;
@@ -363,7 +363,7 @@ namespace FittingPaintings
                 logger.LogWarning("Plugins directory not found: " + pluginPath);
                 return;
             }
-            foreach (FittingPaintings.PaintingGroup paintingGroup in FittingPaintings.paintingGroups)
+            foreach (YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup in YetAnotherRandomPaintingSwap.paintingGroups)
             {
                 string[] directories = Directory.GetDirectories(pluginPath, paintingGroup.paintingFolderName, SearchOption.AllDirectories);
                 if (directories.Length == 0)
@@ -380,7 +380,7 @@ namespace FittingPaintings
             }
         }
 
-        private void LoadImagesFromDirectory(FittingPaintings.PaintingGroup paintingGroup, string directoryPath)
+        private void LoadImagesFromDirectory(YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup, string directoryPath)
         {
             if (!Directory.Exists(directoryPath))
             {
@@ -451,7 +451,7 @@ namespace FittingPaintings
         }
     }
 
-    public class FittingPaintingsSwap
+    public class YetAnotherRandomPaintingSwapSwap
     {
         public enum ModState
         {
@@ -461,7 +461,7 @@ namespace FittingPaintings
         }
 
         private readonly Logger logger;
-        private readonly FittingPaintingsLoader loader;
+        private readonly YetAnotherRandomPaintingSwapLoader loader;
         private static int randomSeed = 0;
         public static int HostSeed = 0;
         public static int ReceivedSeed = 0;
@@ -469,7 +469,7 @@ namespace FittingPaintings
         private int paintingsChangedCount;
         private static ModState currentState = ModState.SinglePlayer;
 
-        public FittingPaintingsSwap(Logger logger, FittingPaintingsLoader loader)
+        public YetAnotherRandomPaintingSwapSwap(Logger logger, YetAnotherRandomPaintingSwapLoader loader)
         {
             this.logger = logger;
             this.loader = loader;
@@ -515,7 +515,7 @@ namespace FittingPaintings
                     for (int k = 0; k < sharedMaterials.Length; k++)
                     {
                         num++;
-                        foreach (FittingPaintings.PaintingGroup paintingGroup in FittingPaintings.paintingGroups)
+                        foreach (YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup in YetAnotherRandomPaintingSwap.paintingGroups)
                         {
                             if (sharedMaterials[k] != null && 
                                 paintingGroup.targetMaterials.Contains(sharedMaterials[k].name) && 
@@ -555,12 +555,12 @@ namespace FittingPaintings
         }
     }
 
-    public class FittingPaintingsSync : MonoBehaviourPunCallbacks, IOnEventCallback
+    public class YetAnotherRandomPaintingSwapSync : MonoBehaviourPunCallbacks, IOnEventCallback
     {
         private readonly Logger logger;
         public const byte SeedEventCode = 1;
 
-        public FittingPaintingsSync(Logger logger)
+        public YetAnotherRandomPaintingSwapSync(Logger logger)
         {
             this.logger = logger;
         }
@@ -583,7 +583,7 @@ namespace FittingPaintings
             {
                 int num = (int)((object[])photonEvent.CustomData)[0];
                 logger.LogInfo($"Received seed: {num}");
-                FittingPaintings.receivedSeed = num;
+                YetAnotherRandomPaintingSwap.receivedSeed = num;
             }
         }
     }
