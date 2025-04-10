@@ -1,384 +1,96 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using ExitGames.Client.Photon;
 using HarmonyLib;
-using UnityEngine;
-using UnityEngine.SceneManagement;
 using Photon.Pun;
 using Photon.Realtime;
-using ExitGames.Client.Photon;
+using UnityEngine;
+using UnityEngine.SceneManagement;
 
-namespace YetAnotherRandomPaintingSwap
+namespace FittingPaintings
 {
-    [BepInPlugin("snowtyler.YetAnotherRandomPaintingSwap", "Yet Another Random Painting Swap", "1.0.0")]
-    public class Plugin : BaseUnityPlugin
+    [BepInPlugin("ZeroTails.FittingPaintings", "FittingPaintings", "1.1.0")]
+    public class FittingPaintings : BaseUnityPlugin
     {
-        // Configuration settings
-        public static class PluginConfig
-        {
-            public static ConfigEntry<bool> GrungeEnabled;
-            public static ConfigEntry<float> CustomPaintingChance;
-            public static ConfigEntry<Color> BaseColor;
-            public static ConfigEntry<Color> MainColor;
-            public static ConfigEntry<Color> CracksColor;
-            public static ConfigEntry<Color> OutlineColor;
-            public static ConfigEntry<float> CracksPower;
-
-            public static void Init(ConfigFile config)
-            {
-                GrungeEnabled = config.Bind("General", "GrungeEnabled", true, "Enable grunge assets");
-                CustomPaintingChance = config.Bind("General", "CustomPaintingChance", 1.0f, "Chance (0-1) to replace a painting");
-
-                BaseColor = config.Bind("Grunge", "BaseColor", Color.gray, "Base color for grunge material");
-                MainColor = config.Bind("Grunge", "MainColor", Color.white, "Main color for grunge material");
-                CracksColor = config.Bind("Grunge", "CracksColor", Color.black, "Cracks color for grunge material");
-                OutlineColor = config.Bind("Grunge", "OutlineColor", Color.red, "Outline color for grunge material");
-                CracksPower = config.Bind("Grunge", "CracksPower", 1.0f, "Cracks power for grunge material");
-            }
-        }
-
-        // Defines painting groups used for material swapping
         public class PaintingGroup
         {
             public string paintingType;
             public string paintingFolderName;
-            public HashSet<string> whitelistMaterials;
+            public HashSet<string> targetMaterials;
             public List<Material> loadedMaterials;
-            public List<string> loadedTextureNames;
-            public Material baseMaterial = null;
 
-            public PaintingGroup(string type, string folderName, HashSet<string> whitelist)
+            public PaintingGroup(string paintingType, string paintingFolderName, HashSet<string> targetMaterials)
             {
-                paintingType = type;
-                paintingFolderName = folderName;
-                whitelistMaterials = whitelist;
+                this.paintingType = paintingType;
+                this.paintingFolderName = paintingFolderName;
+                this.targetMaterials = targetMaterials;
                 loadedMaterials = new List<Material>();
-                loadedTextureNames = new List<string>();
             }
         }
 
-        // Whitelists (union from both mods)
-        public static readonly HashSet<string> whitelistLandscapeMaterials = new HashSet<string>
+        [HarmonyPatch(typeof(LoadingUI), "LevelAnimationComplete")]
+        public class PaintingSwapPatch
         {
-            "Painting_H_Landscape", "Painting_H_crow", "Painting_H_crow_0"
-        };
-        public static readonly HashSet<string> whitelistSquareMaterials = new HashSet<string>
-        {
-            "Painting_S_Creep", "Painting_S_Creep 2_0", "Painting_S_Creep 2", "Painting Wizard Class"
-        };
-        public static readonly HashSet<string> whitelistPortraitMaterials = new HashSet<string>
-        {
-            "Painting_V_jannk", "Painting_V_Furman", "Painting_V_surrealistic", "Painting_V_surrealistic_0",
-            "painting teacher01", "painting teacher02", "painting teacher03", "painting teacher04", "Painting_S_Tree"
-        };
-
-        // Define painting groups with folder names (second mod naming used)
-        public static List<PaintingGroup> paintingGroups = new List<PaintingGroup>
-        {
-            new PaintingGroup("Landscape", "RandomLandscapePaintingSwap_Images", whitelistLandscapeMaterials),
-            new PaintingGroup("Square", "RandomSquarePaintingSwap_Images", whitelistSquareMaterials),
-            new PaintingGroup("Portrait", "RandomPortraitPaintingSwap_Images", whitelistPortraitMaterials)
-        };
-
-        // File search patterns for images
-        public static readonly List<string> imagePatterns = new List<string>
-        {
-            "*.png", "*.jpg", "*.jpeg", "*.bmp"
-        };
-
-        // Asset bundle settings for grunge materials
-        private const string ASSET_BUNDLE_NAME = "painting";
-        private const string MATERIAL_LANDSCAPE_ASSET_NAME = "GrungeHorizontalMaterial";
-        private const string MATERIAL_PORTRAIT_ASSET_NAME = "GrungeVerticalMaterial";
-        private static Material _LandscapeMaterial;
-        private static Material _PortraitMaterial;
-
-        // Multiplayer and seed settings
-        public enum ModState { Host, Client, SinglePlayer }
-        public static ModState currentState = ModState.SinglePlayer;
-        public static int randomSeed = 0;
-        public static int HostSeed = 0;
-        public static int ReceivedSeed = 0;
-        public static int Seed = 0;
-        public static readonly int maxWaitTimeMs = 3000;
-
-        // Instance and logger
-        public static Plugin Instance { get; private set; }
-        internal static ManualLogSource Log;
-        private readonly Harmony harmony = new Harmony("snowtyler.YetAnotherRandomPaintingSwap");
-        internal static PaintingSync sync;
-
-        private void Awake()
-        {
-            Instance = this;
-            Log = base.Logger;
-            PluginConfig.Init(Config);
-            Log.LogInfo("Yet Another Random Painting Swap mod initialized.");
-
-            // Initialize random seed if not set
-            if (randomSeed == 0)
+            private static void Postfix()
             {
-                randomSeed = UnityEngine.Random.Range(0, int.MaxValue);
-                Log.LogInfo($"Generated initial random seed: {randomSeed}");
-            }
-
-            // Load asset bundle and assign base materials if grunge option is enabled
-            if (PluginConfig.GrungeEnabled.Value)
-            {
-                AssignMaterialGroups();
-            }
-
-            LoadImagesFromAllPlugins();
-
-            // Add network sync component
-            sync = gameObject.AddComponent<PaintingSync>();
-
-            harmony.PatchAll();
-        }
-
-        private void AssignMaterialGroups()
-        {
-            string assemblyLocation = Assembly.GetExecutingAssembly().Location;
-            string directoryName = Path.GetDirectoryName(assemblyLocation);
-            string assetLocation = Path.Combine(directoryName, ASSET_BUNDLE_NAME);
-            Log.LogInfo($"Loading asset bundle from: {assetLocation}");
-            if (!File.Exists(assetLocation))
-            {
-                Log.LogWarning("Asset bundle not found.");
-                return;
-            }
-            AssetBundle bundle = AssetBundle.LoadFromFile(assetLocation);
-            if (bundle == null)
-            {
-                Log.LogError("Failed to load asset bundle.");
-                return;
-            }
-            _LandscapeMaterial = bundle.LoadAsset<Material>(MATERIAL_LANDSCAPE_ASSET_NAME);
-            if (_LandscapeMaterial == null)
-                Log.LogError($"Could not load landscape material [{MATERIAL_LANDSCAPE_ASSET_NAME}]!");
-            _PortraitMaterial = bundle.LoadAsset<Material>(MATERIAL_PORTRAIT_ASSET_NAME);
-            if (_PortraitMaterial == null)
-                Log.LogError($"Could not load portrait material [{MATERIAL_PORTRAIT_ASSET_NAME}]!");
-
-            foreach (var group in paintingGroups)
-            {
-                group.baseMaterial = (group.paintingType == "Portrait") ? _PortraitMaterial : _LandscapeMaterial;
-                if (group.baseMaterial == null)
+                Task.Run(async delegate
                 {
-                    Log.LogWarning($"No base material found for [{group.paintingType}]!");
-                    continue;
-                }
-                group.baseMaterial.SetColor(PluginConfig.BaseColor.Definition.Key, PluginConfig.BaseColor.Value);
-                group.baseMaterial.SetColor(PluginConfig.MainColor.Definition.Key, PluginConfig.MainColor.Value);
-                group.baseMaterial.SetColor(PluginConfig.CracksColor.Definition.Key, PluginConfig.CracksColor.Value);
-                group.baseMaterial.SetColor(PluginConfig.OutlineColor.Definition.Key, PluginConfig.OutlineColor.Value);
-                group.baseMaterial.SetFloat(PluginConfig.CracksPower.Definition.Key, PluginConfig.CracksPower.Value);
-            }
-        }
-
-        private void LoadImagesFromAllPlugins()
-        {
-            string pluginDir = Paths.PluginPath;
-            if (!Directory.Exists(pluginDir))
-            {
-                Log.LogWarning($"Plugins directory not found: {pluginDir}");
-                return;
-            }
-            foreach (var group in paintingGroups)
-            {
-                string[] directories = Directory.GetDirectories(pluginDir, group.paintingFolderName, SearchOption.AllDirectories);
-                if (directories.Length == 0)
-                {
-                    Log.LogWarning($"No folders named {group.paintingFolderName} found in plugins.");
-                    continue;
-                }
-                foreach (string dir in directories)
-                {
-                    Log.LogInfo($"Loading images from: {dir}");
-                    LoadImagesFromDirectory(group, dir);
-                }
-            }
-        }
-
-        private void LoadImagesFromDirectory(PaintingGroup group, string directoryPath)
-        {
-            if (!Directory.Exists(directoryPath))
-            {
-                Log.LogWarning($"Directory does not exist: {directoryPath}");
-                return;
-            }
-            List<string> imageFiles = new List<string>();
-            foreach (string pattern in imagePatterns)
-            {
-                imageFiles.AddRange(Directory.GetFiles(directoryPath, pattern, SearchOption.AllDirectories));
-            }
-            if (imageFiles.Count == 0)
-            {
-                Log.LogWarning($"No images found in {directoryPath}");
-                return;
-            }
-            for (int i = 0; i < imageFiles.Count; i++)
-            {
-                string file = imageFiles[i];
-                Texture2D texture = LoadTextureFromFile(file);
-                if (texture != null)
-                {
-                    Material mat;
-                    if (group.baseMaterial != null)
+                    int waited = 0;
+                    int interval = 50;
+                    while (!receivedSeed.HasValue && waited < maxWaitTimeMs)
                     {
-                        mat = new Material(group.baseMaterial);
-                        mat.SetTexture("_MainTex", texture);
+                        await Task.Delay(interval);
+                        waited += interval;
+                    }
+                    if (receivedSeed.HasValue)
+                    {
+                        logger.LogInfo($"[Postfix] Client using received seed: {receivedSeed.Value}");
+                        FittingPaintingsSwap.ReceivedSeed = receivedSeed.Value;
+                        receivedSeed = null;
                     }
                     else
                     {
-                        mat = new Material(Shader.Find("Standard")) { mainTexture = texture };
+                        logger.LogWarning("[Postfix] Client did not receive seed in time. Proceeding without it.");
                     }
-                    group.loadedMaterials.Add(mat);
-                    group.loadedTextureNames.Add(Path.GetFileName(file));
-                    Log.LogInfo($"Loaded image #{i + 1}: {Path.GetFileName(file)} for group {group.paintingType}");
-                }
-                else
-                {
-                    Log.LogWarning($"Failed to load image #{i + 1}: {file}");
-                }
-            }
-            Log.LogInfo($"Total images loaded for {group.paintingType}: {group.loadedMaterials.Count}");
-        }
-
-        private Texture2D LoadTextureFromFile(string filePath)
-        {
-            try
-            {
-                byte[] fileData = File.ReadAllBytes(filePath);
-                Texture2D texture = new Texture2D(2, 2);
-                if (texture.LoadImage(fileData))
-                {
-                    texture.Apply();
-                    return texture;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.LogError($"Exception loading texture from {filePath}: {ex.Message}");
-            }
-            return null;
-        }
-
-        // Replaces painting materials in the active scene using loaded images and the computed seed.
-        public static void ReplacePaintings()
-        {
-            Scene activeScene = SceneManager.GetActiveScene();
-            Log.LogInfo($"Applying seed {Seed} for painting swaps in scene: {activeScene.name}");
-            int paintingsChangedCount = 0;
-            int totalMaterialsChecked = 0;
-            GameObject[] rootObjects = activeScene.GetRootGameObjects();
-            foreach (GameObject go in rootObjects)
-            {
-                foreach (MeshRenderer renderer in go.GetComponentsInChildren<MeshRenderer>())
-                {
-                    Material[] mats = renderer.sharedMaterials;
-                    for (int i = 0; i < mats.Length; i++)
-                    {
-                        totalMaterialsChecked++;
-                        Material currentMat = mats[i];
-                        if (currentMat == null) continue;
-                        foreach (var group in paintingGroups)
-                        {
-                            if (group.whitelistMaterials.Contains(currentMat.name) && group.loadedMaterials.Count > 0)
-                            {
-                                float roll = UnityEngine.Random.Range(0f, 1f);
-                                if (roll > PluginConfig.CustomPaintingChance.Value)
-                                {
-                                    Log.LogInfo($"Skipping replacement for {currentMat.name} with roll {roll}");
-                                    continue;
-                                }
-                                int index = Mathf.Abs((Seed + paintingsChangedCount) % group.loadedMaterials.Count);
-                                mats[i] = group.loadedMaterials[index];
-                                paintingsChangedCount++;
-                                break;
-                            }
-                        }
-                    }
-                    renderer.sharedMaterials = mats;
-                }
-            }
-            Log.LogInfo($"Total materials checked: {totalMaterialsChecked}");
-            Log.LogInfo($"Total paintings replaced: {paintingsChangedCount}");
-            Log.LogInfo($"RandomSeed = {randomSeed}, HostSeed = {HostSeed}, ReceivedSeed = {ReceivedSeed}");
-        }
-
-        // Harmony patch for when level animation completes.
-        [HarmonyPatch(typeof(LoadingUI), "LevelAnimationComplete")]
-        public class PatchLoadingUI
-        {
-            static void Prefix()
-            {
-                if (currentState == ModState.Client)
-                {
-                    PhotonNetwork.AddCallbackTarget(sync);
-                }
-                if (currentState == ModState.Host)
-                {
-                    HostSeed = UnityEngine.Random.Range(0, int.MaxValue);
-                    Log.LogInfo($"Generated HostSeed: {HostSeed}");
-                    PhotonNetwork.AddCallbackTarget(sync);
-                    sync.SendSeed(HostSeed);
-                }
-            }
-
-            static void Postfix()
-            {
-                Task.Run(async () =>
-                {
-                    int waited = 0, interval = 50;
-                    if (currentState == ModState.Client)
-                    {
-                        while (ReceivedSeed == 0 && waited < maxWaitTimeMs)
-                        {
-                            await Task.Delay(interval);
-                            waited += interval;
-                        }
-                        if (ReceivedSeed != 0)
-                        {
-                            Log.LogInfo($"Client using ReceivedSeed: {ReceivedSeed}");
-                            Seed = ReceivedSeed;
-                            ReceivedSeed = 0;
-                        }
-                        else
-                        {
-                            Log.LogWarning("Client did not receive seed in time. Using fallback.");
-                            Seed = randomSeed;
-                        }
-                    }
-                    else if (currentState == ModState.SinglePlayer)
-                    {
-                        Seed = randomSeed;
-                    }
-                    else if (currentState == ModState.Host)
-                    {
-                        Seed = HostSeed;
-                    }
-                    ReplacePaintings();
+                    swapper.ReplacePaintings();
                 });
             }
+
+            private static void Prefix()
+            {
+                if (swapper.GetModState() == FittingPaintingsSwap.ModState.Client)
+                {
+                    PhotonNetwork.AddCallbackTarget(sync);
+                }
+                if (swapper.GetModState() == FittingPaintingsSwap.ModState.Host)
+                {
+                    FittingPaintingsSwap.HostSeed = UnityEngine.Random.Range(0, int.MaxValue);
+                    logger.LogInfo($"Generated Hostseed: {FittingPaintingsSwap.HostSeed}");
+                    PhotonNetwork.AddCallbackTarget(sync);
+                    sync.SendSeed(FittingPaintingsSwap.HostSeed);
+                }
+            }
         }
 
-        // Patches to update mod state during lobby events.
         [HarmonyPatch(typeof(NetworkConnect), "TryJoiningRoom")]
         public class JoinLobbyPatch
         {
-            static void Prefix()
+            private static void Prefix()
             {
-                Log.LogInfo("JoinLobbyPatch Prefix called.");
-                if (currentState == ModState.SinglePlayer)
+                logger.LogInfo("JoinLobbyPatch Prefix called.");
+                if (swapper.GetModState() == FittingPaintingsSwap.ModState.SinglePlayer)
                 {
-                    currentState = ModState.Client;
+                    swapper.SetState(FittingPaintingsSwap.ModState.Client);
                 }
             }
         }
@@ -386,11 +98,13 @@ namespace YetAnotherRandomPaintingSwap
         [HarmonyPatch(typeof(SteamManager), "HostLobby")]
         public class HostLobbyPatch
         {
-            static bool Prefix()
+            private static bool Prefix()
             {
-                Log.LogInfo("HostLobbyPatch Prefix called.");
-                if (currentState != ModState.SinglePlayer)
-                    currentState = ModState.Host;
+                logger.LogInfo("HostLobbyPatch Prefix called.");
+                if (swapper.GetModState() != 0)
+                {
+                    swapper.SetState(FittingPaintingsSwap.ModState.Host);
+                }
                 return true;
             }
         }
@@ -398,33 +112,535 @@ namespace YetAnotherRandomPaintingSwap
         [HarmonyPatch(typeof(SteamManager), "LeaveLobby")]
         public class LeaveLobbyPatch
         {
-            static void Postfix()
+            private static void Postfix()
             {
                 PhotonNetwork.RemoveCallbackTarget(sync);
-                currentState = ModState.SinglePlayer;
+                swapper.SetState(FittingPaintingsSwap.ModState.SinglePlayer);
+            }
+        }
+
+        public static List<PaintingGroup> paintingGroups = new List<PaintingGroup>
+        {
+            new PaintingGroup("Landscape", "FittingSwapLandscapePaintings", new HashSet<string> { "Painting_H_Landscape" }),
+            new PaintingGroup("Portrait", "FittingSwapPortraitPaintings", new HashSet<string> { "Painting_V_Furman", "painting teacher01", "painting teacher02", "painting teacher03", "painting teacher04", "Painting_S_Tree" }),
+            new PaintingGroup("Square", "FittingSwapSquarePaintings", new HashSet<string> { "Painting_S_Creep", "Painting_S_Creep 2_0", "Painting_S_Creep 2", "Painting Wizard Class" })
+        };
+
+        private static Logger logger = null;
+        private static FittingPaintingsLoader loader = null;
+        private static FittingPaintingsSwap swapper = null;
+        private static FittingPaintingsSync sync = null;
+        private static GrungeMaterialManager grungeMaterialManager = null;
+
+        public static int? receivedSeed = null;
+        public static readonly int maxWaitTimeMs = 3000;
+
+        private readonly Harmony harmony = new Harmony("ZeroTails.FittingPaintings");
+
+        private void Awake()
+        {
+            logger = new Logger("FittingPaintings");
+            logger.LogInfo("FittingPaintings mod initialized.");
+            
+            // Initialize configuration
+            PluginConfig.Init(Config);
+            
+            // Initialize grunge material manager
+            grungeMaterialManager = new GrungeMaterialManager(logger);
+            bool grungeLoaded = grungeMaterialManager.LoadGrungeMaterials();
+            
+            if (grungeLoaded)
+            {
+                logger.LogInfo("Grunge materials loaded successfully");
+            }
+            
+            // Initialize loader with grunge manager
+            loader = new FittingPaintingsLoader(logger, grungeMaterialManager);
+            loader.LoadImagesFromAllPlugins();
+            
+            swapper = new FittingPaintingsSwap(logger, loader);
+            sync = new FittingPaintingsSync(logger);
+            
+            harmony.PatchAll();
+            
+            if (PluginConfig.enableDebugLog.Value)
+            {
+                logger.LogInfo("Debug logging enabled");
+            }
+        }
+        
+        private void OnDestroy()
+        {
+            // Clean up when plugin is unloaded
+            harmony.UnpatchSelf();
+        }
+    }
+
+    internal static class PluginConfig
+    {
+        internal static ConfigEntry<bool> enableDebugLog;
+        internal static ConfigEntry<float> customPaintingChance;
+
+        internal static class Grunge
+        {
+            internal static ConfigEntry<bool> enableGrunge;
+            internal static ConfigEntry<Color> _BaseColor;
+            internal static ConfigEntry<Color> _MainColor;
+            internal static ConfigEntry<Color> _CracksColor;
+            internal static ConfigEntry<Color> _OutlineColor;
+            internal static ConfigEntry<float> _CracksPower;
+        }
+
+        internal static void Init(ConfigFile config)
+        {
+            enableDebugLog = config.Bind(
+                "General",
+                "DebugLog",
+                false,
+                "Print extra logs for debugging"
+            );
+
+            customPaintingChance = config.Bind(
+                "General",
+                "CustomPaintingChance",
+                1.0f,
+                "The chance of a painting being replaced by a custom painting (1 = 100%, 0.5 = 50%)"
+            );
+
+            Grunge.enableGrunge = config.Bind(
+                "Grunge",
+                "EnableGrunge",
+                true,
+                "Whether the grunge effect is enabled"
+            );
+
+            Grunge._BaseColor = config.Bind(
+                "Grunge",
+                "_GrungeBaseColor",
+                new Color(0, 0, 0, 1),
+                "The base color of the grunge"
+            );
+
+            Grunge._MainColor = config.Bind(
+                "Grunge",
+                "_GrungeMainColor",
+                new Color(0, 0, 0, 1),
+                "The color of the main overlay of grunge"
+            );
+
+            Grunge._CracksColor = config.Bind(
+                "Grunge",
+                "_GrungeCracksColor",
+                new Color(0, 0, 0, 1),
+                "The color of the cracks in the grunge"
+            );
+
+            Grunge._OutlineColor = config.Bind(
+                "Grunge",
+                "_GrungeOutlineColor",
+                new Color(0, 0, 0, 1),
+                "The color of the grunge outlining the painting"
+            );
+
+            Grunge._CracksPower = config.Bind(
+                "Grunge",
+                "_GrungeCracksPow",
+                1.0f,
+                "The inverse of intensity of the cracks. 1.0 will have plenty of cracks, higher numbers will have less cracks (Values below 1.0 will start to look bad)"
+            );
+        }
+    }
+
+    public class GrungeMaterialManager
+    {
+        private const string MATERIAL_LANDSCAPE_ASSET_NAME = "GrungeHorizontalMaterial";
+        private const string MATERIAL_PORTRAIT_ASSET_NAME = "GrungeVerticalMaterial";
+        private const string ASSET_BUNDLE_NAME = "painting";
+
+        private static Material _landscapeMaterial;
+        private static Material _portraitMaterial;
+        private readonly Logger logger;
+
+        public GrungeMaterialManager(Logger logger)
+        {
+            this.logger = logger;
+        }
+
+        public bool LoadGrungeMaterials()
+        {
+            if (!PluginConfig.Grunge.enableGrunge.Value)
+            {
+                logger.LogInfo("Grunge overlay is disabled in config");
+                return false;
+            }
+
+            string location = Assembly.GetExecutingAssembly().Location;
+            string directoryName = Path.GetDirectoryName(location);
+            string assetLocation = Path.Combine(directoryName, ASSET_BUNDLE_NAME);
+            
+            logger.LogInfo($"Loading asset bundle from: {assetLocation}");
+            
+            if (!File.Exists(assetLocation))
+            {
+                logger.LogWarning($"Asset Bundle doesn't exist at: {assetLocation}");
+                return false;
+            }
+
+            AssetBundle assetBundle = AssetBundle.LoadFromFile(assetLocation);
+            if (assetBundle == null)
+            {
+                logger.LogError($"Failed to load asset bundle: {ASSET_BUNDLE_NAME}");
+                return false;
+            }
+
+            _landscapeMaterial = assetBundle.LoadAsset<Material>(MATERIAL_LANDSCAPE_ASSET_NAME);
+            if (_landscapeMaterial == null)
+            {
+                logger.LogError($"Could not load landscape painting material [{MATERIAL_LANDSCAPE_ASSET_NAME}]!");
+                return false;
+            }
+
+            _portraitMaterial = assetBundle.LoadAsset<Material>(MATERIAL_PORTRAIT_ASSET_NAME);
+            if (_portraitMaterial == null)
+            {
+                logger.LogError($"Could not load portrait painting material [{MATERIAL_PORTRAIT_ASSET_NAME}]!");
+                return false;
+            }
+
+            ConfigureGrungeMaterials();
+            return true;
+        }
+
+        private void ConfigureGrungeMaterials()
+        {
+            // Configure landscape material
+            _landscapeMaterial.SetColor("_BaseColor", PluginConfig.Grunge._BaseColor.Value);
+            _landscapeMaterial.SetColor("_MainColor", PluginConfig.Grunge._MainColor.Value);
+            _landscapeMaterial.SetColor("_CracksColor", PluginConfig.Grunge._CracksColor.Value);
+            _landscapeMaterial.SetColor("_OutlineColor", PluginConfig.Grunge._OutlineColor.Value);
+            _landscapeMaterial.SetFloat("_CracksPower", PluginConfig.Grunge._CracksPower.Value);
+
+            // Configure portrait material
+            _portraitMaterial.SetColor("_BaseColor", PluginConfig.Grunge._BaseColor.Value);
+            _portraitMaterial.SetColor("_MainColor", PluginConfig.Grunge._MainColor.Value);
+            _portraitMaterial.SetColor("_CracksColor", PluginConfig.Grunge._CracksColor.Value);
+            _portraitMaterial.SetColor("_OutlineColor", PluginConfig.Grunge._OutlineColor.Value);
+            _portraitMaterial.SetFloat("_CracksPower", PluginConfig.Grunge._CracksPower.Value);
+        }
+
+        public Material GetGrungeMaterial(string paintingType)
+        {
+            if (paintingType == "Portrait")
+            {
+                return _portraitMaterial;
+            }
+            else // Square and Landscape paintings use the same material
+            {
+                return _landscapeMaterial;
             }
         }
     }
 
-    // Network sync class to send and receive the seed using Photon.
-    public class PaintingSync : MonoBehaviourPunCallbacks, IOnEventCallback
+    public class FittingPaintingsLoader
     {
+        private readonly Logger logger;
+        private readonly GrungeMaterialManager grungeMaterialManager;
+        private static readonly string[] validExtensions = new string[] { ".png", ".jpg", ".jpeg", ".bmp" };
+
+        public List<Material> LoadedMaterials { get; } = new List<Material>();
+
+        public FittingPaintingsLoader(Logger logger, GrungeMaterialManager grungeMaterialManager)
+        {
+            this.logger = logger;
+            this.grungeMaterialManager = grungeMaterialManager;
+        }
+
+        public void LoadImagesFromAllPlugins()
+        {
+            string pluginPath = Paths.PluginPath;
+            if (!Directory.Exists(pluginPath))
+            {
+                logger.LogWarning("Plugins directory not found: " + pluginPath);
+                return;
+            }
+            foreach (FittingPaintings.PaintingGroup paintingGroup in FittingPaintings.paintingGroups)
+            {
+                string[] directories = Directory.GetDirectories(pluginPath, paintingGroup.paintingFolderName, SearchOption.AllDirectories);
+                if (directories.Length == 0)
+                {
+                    logger.LogWarning("No '" + paintingGroup.paintingFolderName + "' folders found in plugins.");
+                    continue;
+                }
+                string[] array = directories;
+                foreach (string text in array)
+                {
+                    logger.LogInfo("Loading images from: " + text);
+                    LoadImagesFromDirectory(paintingGroup, text);
+                }
+            }
+        }
+
+        private void LoadImagesFromDirectory(FittingPaintings.PaintingGroup paintingGroup, string directoryPath)
+        {
+            if (!Directory.Exists(directoryPath))
+            {
+                logger.LogWarning("Directory does not exist: " + directoryPath);
+                return;
+            }
+
+            string[] array = (from file in Directory.EnumerateFiles(directoryPath, "*.*", SearchOption.AllDirectories)
+                             where validExtensions.Contains(Path.GetExtension(file).ToLower())
+                             select file).ToArray();
+            
+            if (array.Length == 0)
+            {
+                logger.LogWarning("No images found in " + directoryPath);
+                return;
+            }
+
+            bool useGrunge = PluginConfig.Grunge.enableGrunge.Value;
+            Material grungeMaterial = useGrunge ? grungeMaterialManager.GetGrungeMaterial(paintingGroup.paintingType) : null;
+
+            for (int i = 0; i < array.Length; i++)
+            {
+                string filePath = array[i];
+                string fileName = Path.GetFileName(filePath);
+                Texture2D texture = LoadTextureFromFile(filePath);
+                
+                if (texture != null)
+                {
+                    Material material;
+                    
+                    if (useGrunge && grungeMaterial != null)
+                    {
+                        // Create a new material using the grunge material as a base
+                        material = new Material(grungeMaterial);
+                        material.SetTexture("_MainTex", texture);
+                    }
+                    else
+                    {
+                        // Use standard shader if grunge is disabled or not available
+                        material = new Material(Shader.Find("Standard"))
+                        {
+                            mainTexture = texture
+                        };
+                    }
+                    
+                    paintingGroup.loadedMaterials.Add(material);
+                    logger.LogInfo($"Loaded image #{i + 1}: {fileName}");
+                }
+                else
+                {
+                    logger.LogWarning($"Failed to load image #{i + 1}: {filePath}");
+                }
+            }
+            
+            logger.LogInfo($"Total images loaded for {paintingGroup.paintingType}: {paintingGroup.loadedMaterials.Count}");
+        }
+
+        private Texture2D LoadTextureFromFile(string filePath)
+        {
+            byte[] array = File.ReadAllBytes(filePath);
+            Texture2D texture = new Texture2D(2, 2);
+            if (ImageConversion.LoadImage(texture, array))
+            {
+                texture.Apply();
+                return texture;
+            }
+            return null;
+        }
+    }
+
+    public class FittingPaintingsSwap
+    {
+        public enum ModState
+        {
+            Host,
+            Client,
+            SinglePlayer
+        }
+
+        private readonly Logger logger;
+        private readonly FittingPaintingsLoader loader;
+        private static int randomSeed = 0;
+        public static int HostSeed = 0;
+        public static int ReceivedSeed = 0;
+        public static int Seed = 0;
+        private int paintingsChangedCount;
+        private static ModState currentState = ModState.SinglePlayer;
+
+        public FittingPaintingsSwap(Logger logger, FittingPaintingsLoader loader)
+        {
+            this.logger = logger;
+            this.loader = loader;
+            logger.LogInfo($"Initial ModState: {currentState}");
+            if (randomSeed == 0)
+            {
+                randomSeed = UnityEngine.Random.Range(0, int.MaxValue);
+                logger.LogInfo($"Generated initial random seed: {randomSeed}");
+            }
+        }
+
+        public ModState GetModState()
+        {
+            return currentState;
+        }
+
+        public void ReplacePaintings()
+        {
+            ModState modState = currentState;
+            int seed = modState switch
+            {
+                ModState.SinglePlayer => randomSeed,
+                ModState.Host => HostSeed,
+                ModState.Client => ReceivedSeed,
+                _ => Seed,
+            };
+            
+            Seed = seed;
+            Scene activeScene = SceneManager.GetActiveScene();
+            logger.LogInfo($"Applying seed {Seed} for painting swaps in scene: {activeScene.name}");
+            logger.LogInfo("Replacing all materials containing 'painting' with custom images...");
+            
+            paintingsChangedCount = 0;
+            int num = 0;
+            GameObject[] rootGameObjects = activeScene.GetRootGameObjects();
+            
+            foreach (GameObject gameObject in rootGameObjects)
+            {
+                MeshRenderer[] componentsInChildren = gameObject.GetComponentsInChildren<MeshRenderer>();
+                foreach (MeshRenderer meshRenderer in componentsInChildren)
+                {
+                    Material[] sharedMaterials = meshRenderer.sharedMaterials;
+                    for (int k = 0; k < sharedMaterials.Length; k++)
+                    {
+                        num++;
+                        foreach (FittingPaintings.PaintingGroup paintingGroup in FittingPaintings.paintingGroups)
+                        {
+                            if (sharedMaterials[k] != null && 
+                                paintingGroup.targetMaterials.Contains(sharedMaterials[k].name) && 
+                                paintingGroup.loadedMaterials.Count > 0)
+                            {
+                                // Apply custom painting chance from config
+                                if (UnityEngine.Random.value > PluginConfig.customPaintingChance.Value)
+                                {
+                                    if (PluginConfig.enableDebugLog.Value)
+                                    {
+                                        logger.LogInfo($"Skipping replacement of {sharedMaterials[k].name} due to chance setting");
+                                    }
+                                    continue;
+                                }
+                                
+                                int index = Mathf.Abs((Seed + paintingsChangedCount) % paintingGroup.loadedMaterials.Count);
+                                sharedMaterials[k] = paintingGroup.loadedMaterials[index];
+                                paintingsChangedCount++;
+                            }
+                        }
+                    }
+                    meshRenderer.sharedMaterials = sharedMaterials;
+                }
+            }
+            
+            logger.LogInfo($"Total materials checked: {num}");
+            logger.LogInfo($"Total paintings changed in this scene: {paintingsChangedCount}");
+            logger.LogInfo($"RandomSeed = {randomSeed}");
+            logger.LogInfo($"HostSeed = {HostSeed}");
+            logger.LogInfo($"ReceivedSeed = {ReceivedSeed}");
+        }
+
+        public void SetState(ModState newState)
+        {
+            currentState = newState;
+            logger.LogInfo($"Mod state set to: {currentState}");
+        }
+    }
+
+    public class FittingPaintingsSync : MonoBehaviourPunCallbacks, IOnEventCallback
+    {
+        private readonly Logger logger;
         public const byte SeedEventCode = 1;
+
+        public FittingPaintingsSync(Logger logger)
+        {
+            this.logger = logger;
+        }
+
         public void SendSeed(int seed)
         {
-            object[] content = new object[] { seed };
-            var options = new RaiseEventOptions { Receivers = ReceiverGroup.Others, CachingOption = EventCaching.AddToRoomCache };
-            PhotonNetwork.RaiseEvent(SeedEventCode, content, options, SendOptions.SendReliable);
-            Plugin.Log.LogInfo("Sending seed to other clients");
+            object[] array = new object[1] { seed };
+            logger.LogInfo("Sharing seed with other clients");
+            RaiseEventOptions options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.Others,
+                CachingOption = EventCaching.AddToRoomCache
+            };
+            PhotonNetwork.RaiseEvent(SeedEventCode, array, options, SendOptions.SendReliable);
         }
 
         public void OnEvent(EventData photonEvent)
         {
             if (photonEvent.Code == SeedEventCode)
             {
-                int received = (int)((object[])photonEvent.CustomData)[0];
-                Plugin.Log.LogInfo($"Received seed: {received}");
-                Plugin.ReceivedSeed = received;
+                int num = (int)((object[])photonEvent.CustomData)[0];
+                logger.LogInfo($"Received seed: {num}");
+                FittingPaintings.receivedSeed = num;
+            }
+        }
+    }
+
+    public class Logger
+    {
+        private readonly string logFilePath;
+        private readonly ManualLogSource logSource;
+
+        public Logger(string modName)
+        {
+            string directoryName = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            logFilePath = Path.Combine(directoryName, modName + "_log.txt");
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
+            }
+            logSource = BepInEx.Logging.Logger.CreateLogSource(modName);
+        }
+
+        public void LogInfo(string message)
+        {
+            WriteLog("INFO", message);
+            logSource.LogInfo(message);
+        }
+
+        public void LogWarning(string message)
+        {
+            WriteLog("WARNING", message);
+            logSource.LogWarning(message);
+        }
+
+        public void LogError(string message)
+        {
+            WriteLog("ERROR", message);
+            logSource.LogError(message);
+        }
+
+        private void WriteLog(string level, string message)
+        {
+            string text = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{level}] {message}";
+            File.AppendAllText(logFilePath, text + Environment.NewLine);
+        }
+
+        public void LogMaterial(Material material)
+        {
+            if (material != null && material.name.ToLower().Contains("painting"))
+            {
+                LogInfo("Material containing 'painting': " + material.name);
+            }
+        }
+
+        public void ClearLog()
+        {
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
             }
         }
     }
