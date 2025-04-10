@@ -145,13 +145,26 @@ namespace YetAnotherRandomPaintingSwap
             // Initialize configuration
             PluginConfig.Init(Config);
             
+            // Log the grunge configuration
+            bool grungeEnabled = PluginConfig.Grunge.enableGrunge.Value;
+            logger.LogInfo($"Grunge effect is {(grungeEnabled ? "ENABLED" : "DISABLED")} in configuration");
+            
             // Initialize grunge material manager
             grungeMaterialManager = new GrungeMaterialManager(logger);
-            bool grungeLoaded = grungeMaterialManager.LoadGrungeMaterials();
             
-            if (grungeLoaded)
+            // Only attempt to load grunge materials if enabled
+            bool grungeLoaded = false;
+            if (grungeEnabled)
             {
-                logger.LogInfo("Grunge materials loaded successfully");
+                grungeLoaded = grungeMaterialManager.LoadGrungeMaterials();
+                if (grungeLoaded)
+                {
+                    logger.LogInfo("Grunge materials loaded successfully");
+                }
+                else
+                {
+                    logger.LogWarning("Failed to load grunge materials");
+                }
             }
             
             // Initialize loader with grunge manager
@@ -257,8 +270,16 @@ namespace YetAnotherRandomPaintingSwap
         private const string MATERIAL_PORTRAIT_ASSET_NAME = "GrungeVerticalMaterial";
         private const string ASSET_BUNDLE_NAME = "painting";
 
-        private static Material _landscapeMaterial;
-        private static Material _portraitMaterial;
+        // Shader property names
+        private const string PROP_BASE_COLOR = "_BaseColor";
+        private const string PROP_MAIN_COLOR = "_MainColor";
+        private const string PROP_CRACKS_COLOR = "_CracksColor";
+        private const string PROP_OUTLINE_COLOR = "_OutlineColor";
+        private const string PROP_CRACKS_POWER = "_CracksPower";
+        private const string PROP_MAIN_TEX = "_MainTex";
+
+        private Material _landscapeMaterial;
+        private Material _portraitMaterial;
         private readonly Logger logger;
 
         public GrungeMaterialManager(Logger logger)
@@ -268,9 +289,10 @@ namespace YetAnotherRandomPaintingSwap
 
         public bool LoadGrungeMaterials()
         {
-            if (!PluginConfig.Grunge.enableGrunge.Value)
+            // Early return if grunge is disabled
+            if (!IsGrungeEnabled())
             {
-                logger.LogInfo("Grunge overlay is disabled in config");
+                logger.LogInfo("Skipping grunge material loading as it's disabled in config");
                 return false;
             }
 
@@ -307,28 +329,65 @@ namespace YetAnotherRandomPaintingSwap
                 return false;
             }
 
+            // Configure the template materials
             ConfigureGrungeMaterials();
+            
             return true;
         }
 
         private void ConfigureGrungeMaterials()
         {
+            logger.LogInfo($"Configuring grunge materials with CracksPower: {PluginConfig.Grunge._CracksPower.Value}");
+            
             // Configure landscape material
-            _landscapeMaterial.SetColor("_BaseColor", PluginConfig.Grunge._BaseColor.Value);
-            _landscapeMaterial.SetColor("_MainColor", PluginConfig.Grunge._MainColor.Value);
-            _landscapeMaterial.SetColor("_CracksColor", PluginConfig.Grunge._CracksColor.Value);
-            _landscapeMaterial.SetColor("_OutlineColor", PluginConfig.Grunge._OutlineColor.Value);
-            _landscapeMaterial.SetFloat("_CracksPower", PluginConfig.Grunge._CracksPower.Value);
-
+            ConfigureGrungeMaterial(_landscapeMaterial);
+            
             // Configure portrait material
-            _portraitMaterial.SetColor("_BaseColor", PluginConfig.Grunge._BaseColor.Value);
-            _portraitMaterial.SetColor("_MainColor", PluginConfig.Grunge._MainColor.Value);
-            _portraitMaterial.SetColor("_CracksColor", PluginConfig.Grunge._CracksColor.Value);
-            _portraitMaterial.SetColor("_OutlineColor", PluginConfig.Grunge._OutlineColor.Value);
-            _portraitMaterial.SetFloat("_CracksPower", PluginConfig.Grunge._CracksPower.Value);
+            ConfigureGrungeMaterial(_portraitMaterial);
+        }
+        
+        private void ConfigureGrungeMaterial(Material material)
+        {
+            if (material == null) return;
+            
+            material.SetColor(PROP_BASE_COLOR, PluginConfig.Grunge._BaseColor.Value);
+            material.SetColor(PROP_MAIN_COLOR, PluginConfig.Grunge._MainColor.Value);
+            material.SetColor(PROP_CRACKS_COLOR, PluginConfig.Grunge._CracksColor.Value);
+            material.SetColor(PROP_OUTLINE_COLOR, PluginConfig.Grunge._OutlineColor.Value);
+            material.SetFloat(PROP_CRACKS_POWER, PluginConfig.Grunge._CracksPower.Value);
+            
+            // Ensure the shader knows these properties have changed
+            material.shader.maximumLOD = 600;
         }
 
-        public Material GetGrungeMaterial(string paintingType)
+        public Material CreateMaterialInstance(string paintingType, Texture2D texture)
+        {
+            // Always check current config state
+            if (!IsGrungeEnabled())
+            {
+                return null;
+            }
+            
+            Material baseMaterial = GetBaseMaterial(paintingType);
+            if (baseMaterial == null) return null;
+            
+            // Create a new material instance with all properties copied
+            Material newMaterial = new Material(baseMaterial);
+            
+            // Apply the texture
+            newMaterial.SetTexture(PROP_MAIN_TEX, texture);
+            
+            // Re-apply the grunge settings to ensure they're correctly set
+            newMaterial.SetColor(PROP_BASE_COLOR, PluginConfig.Grunge._BaseColor.Value);
+            newMaterial.SetColor(PROP_MAIN_COLOR, PluginConfig.Grunge._MainColor.Value);
+            newMaterial.SetColor(PROP_CRACKS_COLOR, PluginConfig.Grunge._CracksColor.Value);
+            newMaterial.SetColor(PROP_OUTLINE_COLOR, PluginConfig.Grunge._OutlineColor.Value);
+            newMaterial.SetFloat(PROP_CRACKS_POWER, PluginConfig.Grunge._CracksPower.Value);
+            
+            return newMaterial;
+        }
+
+        private Material GetBaseMaterial(string paintingType)
         {
             if (paintingType == "Portrait")
             {
@@ -338,6 +397,12 @@ namespace YetAnotherRandomPaintingSwap
             {
                 return _landscapeMaterial;
             }
+        }
+        
+        public bool IsGrungeEnabled()
+        {
+            // Always check the current value from config
+            return PluginConfig.Grunge.enableGrunge.Value;
         }
     }
 
@@ -363,6 +428,10 @@ namespace YetAnotherRandomPaintingSwap
                 logger.LogWarning("Plugins directory not found: " + pluginPath);
                 return;
             }
+            
+            // Log the grunge state at load time
+            logger.LogInfo($"Grunge effect is {(grungeMaterialManager.IsGrungeEnabled() ? "enabled" : "disabled")} while loading images");
+            
             foreach (YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup in YetAnotherRandomPaintingSwap.paintingGroups)
             {
                 string[] directories = Directory.GetDirectories(pluginPath, paintingGroup.paintingFolderName, SearchOption.AllDirectories);
@@ -398,9 +467,10 @@ namespace YetAnotherRandomPaintingSwap
                 return;
             }
 
-            bool useGrunge = PluginConfig.Grunge.enableGrunge.Value;
-            Material grungeMaterial = useGrunge ? grungeMaterialManager.GetGrungeMaterial(paintingGroup.paintingType) : null;
-
+            // Always check current config state
+            bool useGrunge = grungeMaterialManager.IsGrungeEnabled();
+            logger.LogInfo($"Creating materials with grunge effect {(useGrunge ? "enabled" : "disabled")}");
+            
             for (int i = 0; i < array.Length; i++)
             {
                 string filePath = array[i];
@@ -411,19 +481,27 @@ namespace YetAnotherRandomPaintingSwap
                 {
                     Material material;
                     
-                    if (useGrunge && grungeMaterial != null)
+                    if (useGrunge)
                     {
-                        // Create a new material using the grunge material as a base
-                        material = new Material(grungeMaterial);
-                        material.SetTexture("_MainTex", texture);
+                        // Use the grunge material manager to create a properly configured material
+                        material = grungeMaterialManager.CreateMaterialInstance(paintingGroup.paintingType, texture);
+                        
+                        // Fallback to standard shader if grunge material creation failed
+                        if (material == null)
+                        {
+                            material = CreateStandardMaterial(texture);
+                            logger.LogInfo($"Using standard shader for image: {fileName} (grunge creation failed)");
+                        }
+                        else
+                        {
+                            logger.LogInfo($"Created grunge material for image: {fileName}");
+                        }
                     }
                     else
                     {
-                        // Use standard shader if grunge is disabled or not available
-                        material = new Material(Shader.Find("Standard"))
-                        {
-                            mainTexture = texture
-                        };
+                        // Use standard shader if grunge is disabled
+                        material = CreateStandardMaterial(texture);
+                        logger.LogInfo($"Using standard shader for image: {fileName} (grunge disabled)");
                     }
                     
                     paintingGroup.loadedMaterials.Add(material);
@@ -436,6 +514,15 @@ namespace YetAnotherRandomPaintingSwap
             }
             
             logger.LogInfo($"Total images loaded for {paintingGroup.paintingType}: {paintingGroup.loadedMaterials.Count}");
+        }
+
+        private Material CreateStandardMaterial(Texture2D texture)
+        {
+            // Create a simple standard material with just the texture
+            return new Material(Shader.Find("Standard"))
+            {
+                mainTexture = texture
+            };
         }
 
         private Texture2D LoadTextureFromFile(string filePath)
@@ -500,21 +587,23 @@ namespace YetAnotherRandomPaintingSwap
             Seed = seed;
             Scene activeScene = SceneManager.GetActiveScene();
             logger.LogInfo($"Applying seed {Seed} for painting swaps in scene: {activeScene.name}");
-            logger.LogInfo("Replacing all materials containing 'painting' with custom images...");
+            logger.LogInfo("Replacing materials with custom images...");
             
             paintingsChangedCount = 0;
-            int num = 0;
+            int materialsChecked = 0;
             GameObject[] rootGameObjects = activeScene.GetRootGameObjects();
             
             foreach (GameObject gameObject in rootGameObjects)
             {
-                MeshRenderer[] componentsInChildren = gameObject.GetComponentsInChildren<MeshRenderer>();
+                MeshRenderer[] componentsInChildren = gameObject.GetComponentsInChildren<MeshRenderer>(true);
                 foreach (MeshRenderer meshRenderer in componentsInChildren)
                 {
                     Material[] sharedMaterials = meshRenderer.sharedMaterials;
+                    bool materialsChanged = false;
+                    
                     for (int k = 0; k < sharedMaterials.Length; k++)
                     {
-                        num++;
+                        materialsChecked++;
                         foreach (YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup in YetAnotherRandomPaintingSwap.paintingGroups)
                         {
                             if (sharedMaterials[k] != null && 
@@ -534,14 +623,25 @@ namespace YetAnotherRandomPaintingSwap
                                 int index = Mathf.Abs((Seed + paintingsChangedCount) % paintingGroup.loadedMaterials.Count);
                                 sharedMaterials[k] = paintingGroup.loadedMaterials[index];
                                 paintingsChangedCount++;
+                                materialsChanged = true;
+                                
+                                if (PluginConfig.enableDebugLog.Value)
+                                {
+                                    logger.LogInfo($"Replaced {meshRenderer.gameObject.name} material {k} with {paintingGroup.paintingType} painting");
+                                }
                             }
                         }
                     }
-                    meshRenderer.sharedMaterials = sharedMaterials;
+                    
+                    // Only apply if we actually changed materials
+                    if (materialsChanged)
+                    {
+                        meshRenderer.sharedMaterials = sharedMaterials;
+                    }
                 }
             }
             
-            logger.LogInfo($"Total materials checked: {num}");
+            logger.LogInfo($"Total materials checked: {materialsChecked}");
             logger.LogInfo($"Total paintings changed in this scene: {paintingsChangedCount}");
             logger.LogInfo($"RandomSeed = {randomSeed}");
             logger.LogInfo($"HostSeed = {HostSeed}");
