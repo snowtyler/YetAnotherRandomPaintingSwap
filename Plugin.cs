@@ -278,86 +278,98 @@ namespace YetAnotherRandomPaintingSwap
         private const string PROP_CRACKS_POWER = "_CracksPower";
         private const string PROP_MAIN_TEX = "_MainTex";
 
-        private Material _landscapeMaterial;
-        private Material _portraitMaterial;
-        private readonly Logger logger;
-
-        public GrungeMaterialManager(Logger logger)
+        private void AssignMaterialGroups()
         {
-            this.logger = logger;
-        }
-
-        public bool LoadGrungeMaterials()
-        {
-            // Early return if grunge is disabled
-            if (!IsGrungeEnabled())
-            {
-                logger.LogInfo("Skipping grunge material loading as it's disabled in config");
-                return false;
-            }
-
             string location = Assembly.GetExecutingAssembly().Location;
             string directoryName = Path.GetDirectoryName(location);
-            string assetLocation = Path.Combine(directoryName, ASSET_BUNDLE_NAME);
+            string assetName = "painting";
+            string assetLocation = Path.Combine(directoryName, assetName);
+            Logger.LogInfo($"Loading [{assetLocation}]");
             
-            logger.LogInfo($"Loading asset bundle from: {assetLocation}");
+            bool assetBundleExists = File.Exists(assetLocation);
+            if (assetBundleExists)
+            {
+                Logger.LogInfo($"Asset Bundle exists");
+            }
+            else
+            {
+                Logger.LogWarning($"Asset Bundle doesn't exist");
+                return;
+            }
+
+            AssetBundle assBundle = AssetBundle.LoadFromFile(assetLocation);
+
+            if (assBundle == null)
+            {
+                Logger.LogError($"Failed to load [{assetName}]");
+                return;
+            }
             
-            if (!File.Exists(assetLocation))
+            _LandscapeMaterial = assBundle.LoadAsset<Material>(MATERIAL_LANDSCAPE_ASSET_NAME);
+            if (_LandscapeMaterial == null)
             {
-                logger.LogWarning($"Asset Bundle doesn't exist at: {assetLocation}");
-                return false;
+                Logger.LogError($"Could not load landscape painting material [{MATERIAL_LANDSCAPE_ASSET_NAME}]!");
+                return;
+            }
+            
+            _PortraitMaterial = assBundle.LoadAsset<Material>(MATERIAL_PORTRAIT_ASSET_NAME);
+            if (_PortraitMaterial == null)
+            {
+                Logger.LogError($"Could not load portrait painting material [{MATERIAL_PORTRAIT_ASSET_NAME}]!");
+                return;
             }
 
-            AssetBundle assetBundle = AssetBundle.LoadFromFile(assetLocation);
-            if (assetBundle == null)
-            {
-                logger.LogError($"Failed to load asset bundle: {ASSET_BUNDLE_NAME}");
-                return false;
-            }
-
-            _landscapeMaterial = assetBundle.LoadAsset<Material>(MATERIAL_LANDSCAPE_ASSET_NAME);
-            if (_landscapeMaterial == null)
-            {
-                logger.LogError($"Could not load landscape painting material [{MATERIAL_LANDSCAPE_ASSET_NAME}]!");
-                return false;
-            }
-
-            _portraitMaterial = assetBundle.LoadAsset<Material>(MATERIAL_PORTRAIT_ASSET_NAME);
-            if (_portraitMaterial == null)
-            {
-                logger.LogError($"Could not load portrait painting material [{MATERIAL_PORTRAIT_ASSET_NAME}]!");
-                return false;
-            }
-
+            // Log the color values to verify they're correct
+            Logger.LogInfo($"BaseColor value from config: {ColorToString(PluginConfig.Grunge._BaseColor.Value)}");
+            Logger.LogInfo($"MainColor value from config: {ColorToString(PluginConfig.Grunge._MainColor.Value)}");
+            Logger.LogInfo($"CracksColor value from config: {ColorToString(PluginConfig.Grunge._CracksColor.Value)}");
+            Logger.LogInfo($"OutlineColor value from config: {ColorToString(PluginConfig.Grunge._OutlineColor.Value)}");
+            
             // Configure the template materials
-            ConfigureGrungeMaterials();
+            ConfigureGrungeMaterial(_LandscapeMaterial);
+            ConfigureGrungeMaterial(_PortraitMaterial);
             
-            return true;
+            // Assign materials to painting groups
+            foreach (var paintingGroup in paintingGroups)
+            {
+                var paintingType = paintingGroup.paintingType;
+                if (paintingType == "Portrait")
+                {
+                    paintingGroup.baseMaterial = _PortraitMaterial;
+                }
+                else // Square paintings can use the same material as landscape paintings
+                {
+                    paintingGroup.baseMaterial = _LandscapeMaterial;
+                }
+
+                if (paintingGroup.baseMaterial == null)
+                {
+                    Logger.LogWarning($"No base material found for [{paintingType}]!");
+                }
+            }
         }
 
-        private void ConfigureGrungeMaterials()
-        {
-            logger.LogInfo($"Configuring grunge materials with CracksPower: {PluginConfig.Grunge._CracksPower.Value}");
-            
-            // Configure landscape material
-            ConfigureGrungeMaterial(_landscapeMaterial);
-            
-            // Configure portrait material
-            ConfigureGrungeMaterial(_portraitMaterial);
-        }
-        
         private void ConfigureGrungeMaterial(Material material)
         {
             if (material == null) return;
             
+            // Use the correct shader property names, not the config keys
             material.SetColor(PROP_BASE_COLOR, PluginConfig.Grunge._BaseColor.Value);
             material.SetColor(PROP_MAIN_COLOR, PluginConfig.Grunge._MainColor.Value);
             material.SetColor(PROP_CRACKS_COLOR, PluginConfig.Grunge._CracksColor.Value);
             material.SetColor(PROP_OUTLINE_COLOR, PluginConfig.Grunge._OutlineColor.Value);
             material.SetFloat(PROP_CRACKS_POWER, PluginConfig.Grunge._CracksPower.Value);
             
-            // Ensure the shader knows these properties have changed
+            // Log the actual values set on the material to verify
+            Logger.LogInfo($"Material {material.name} BaseColor set to: {ColorToString(material.GetColor(PROP_BASE_COLOR))}");
+            
+            // Force material to update
             material.shader.maximumLOD = 600;
+        }
+
+        private string ColorToString(Color color)
+        {
+            return $"RGBA({color.r}, {color.g}, {color.b}, {color.a}) Hex: {ColorUtility.ToHtmlStringRGBA(color)}";
         }
 
         public Material CreateMaterialInstance(string paintingType, Texture2D texture)
@@ -449,72 +461,149 @@ namespace YetAnotherRandomPaintingSwap
             }
         }
 
-        private void LoadImagesFromDirectory(YetAnotherRandomPaintingSwap.PaintingGroup paintingGroup, string directoryPath)
+        private void LoadImagesFromDirectory(PaintingGroup InPaintingGroup, string directoryPath)
+    {
+        string paintingType = InPaintingGroup.paintingType;
+
+        if (!Directory.Exists(directoryPath))
         {
-            if (!Directory.Exists(directoryPath))
-            {
-                logger.LogWarning("Directory does not exist: " + directoryPath);
-                return;
-            }
+            Logger.LogWarning($"The folder [{directoryPath}] does not exist!");
+            return;
+        }
 
-            string[] array = (from file in Directory.EnumerateFiles(directoryPath, "*.*", SearchOption.AllDirectories)
-                             where validExtensions.Contains(Path.GetExtension(file).ToLower())
-                             select file).ToArray();
-            
-            if (array.Length == 0)
-            {
-                logger.LogWarning("No images found in " + directoryPath);
-                return;
-            }
+        Logger.LogInfo($"Selecting image patterns for group [{paintingType}] for files : {directoryPath}");
+        List<string> imageFiles = imagePatterns.SelectMany(pattern => Directory.GetFiles(directoryPath, pattern)).ToList();
 
-            // Always check current config state
-            bool useGrunge = grungeMaterialManager.IsGrungeEnabled();
-            logger.LogInfo($"Creating materials with grunge effect {(useGrunge ? "enabled" : "disabled")}");
+        if (!imageFiles.Any())
+        {
+            Logger.LogWarning($"No images found in the folder [{directoryPath}]");
+            return;
+        }
+
+        // Log grunge status for debugging
+        bool grungeEnabled = PluginConfig.Grunge.enableGrunge.Value;
+        Logger.LogInfo($"Grunge effect is {(grungeEnabled ? "ENABLED" : "DISABLED")} for this painting group");
+        
+        if (grungeEnabled && InPaintingGroup.baseMaterial != null)
+        {
+            Logger.LogInfo($"Using grunge material for {paintingType} paintings");
             
-            for (int i = 0; i < array.Length; i++)
+            // Log current color values from the base material
+            if (PluginConfig.enableDebugLog.Value)
             {
-                string filePath = array[i];
-                string fileName = Path.GetFileName(filePath);
-                Texture2D texture = LoadTextureFromFile(filePath);
-                
-                if (texture != null)
+                LogMaterialProperties(InPaintingGroup.baseMaterial);
+            }
+        }
+
+        foreach (var imageFile in imageFiles)
+        {
+            try
+            {
+                string filename = Path.GetFileName(imageFile);
+                Texture2D texture = LoadTextureFromFile(imageFile);
+
+                if (texture == null)
                 {
-                    Material material;
+                    Logger.LogWarning($"Error loading image : [{imageFile}]");
+                    continue;
+                }
+
+                Material paintingGroupMaterial = InPaintingGroup.baseMaterial;
+                Material material;
+                
+                // Create the appropriate material based on whether grunge is enabled
+                if (grungeEnabled && paintingGroupMaterial != null)
+                {
+                    // Create a new material that inherits all properties from the base material
+                    material = new Material(paintingGroupMaterial);
                     
-                    if (useGrunge)
-                    {
-                        // Use the grunge material manager to create a properly configured material
-                        material = grungeMaterialManager.CreateMaterialInstance(paintingGroup.paintingType, texture);
-                        
-                        // Fallback to standard shader if grunge material creation failed
-                        if (material == null)
-                        {
-                            material = CreateStandardMaterial(texture);
-                            logger.LogInfo($"Using standard shader for image: {fileName} (grunge creation failed)");
-                        }
-                        else
-                        {
-                            logger.LogInfo($"Created grunge material for image: {fileName}");
-                        }
-                    }
-                    else
-                    {
-                        // Use standard shader if grunge is disabled
-                        material = CreateStandardMaterial(texture);
-                        logger.LogInfo($"Using standard shader for image: {fileName} (grunge disabled)");
-                    }
+                    // Set the texture
+                    material.SetTexture(PROP_MAIN_TEX, texture);
                     
-                    paintingGroup.loadedMaterials.Add(material);
-                    logger.LogInfo($"Loaded image #{i + 1}: {fileName}");
+                    // Re-apply the grunge settings to ensure they're correctly set
+                    material.SetColor(PROP_BASE_COLOR, PluginConfig.Grunge._BaseColor.Value);
+                    material.SetColor(PROP_MAIN_COLOR, PluginConfig.Grunge._MainColor.Value);
+                    material.SetColor(PROP_CRACKS_COLOR, PluginConfig.Grunge._CracksColor.Value);
+                    material.SetColor(PROP_OUTLINE_COLOR, PluginConfig.Grunge._OutlineColor.Value);
+                    material.SetFloat(PROP_CRACKS_POWER, PluginConfig.Grunge._CracksPower.Value);
+                    
+                    if (PluginConfig.enableDebugLog.Value)
+                    {
+                        Logger.LogInfo($"Applied grunge settings to material for {filename}");
+                        LogMaterialProperties(material);
+                    }
                 }
                 else
                 {
-                    logger.LogWarning($"Failed to load image #{i + 1}: {filePath}");
+                    // Use standard shader if grunge is disabled or base material not available
+                    material = new Material(Shader.Find("Standard")) { mainTexture = texture };
+                    Logger.LogInfo($"Created standard material (no grunge) for {filename}");
+                }
+
+                InPaintingGroup.loadedMaterials.Add(material);
+                InPaintingGroup.loadedTextureNames.Add(filename);
+
+                Logger.LogInfo($"Created Material for group [{paintingType}] for loaded image : {filename}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Exception processing image {imageFile}: {ex.Message}");
+                if (PluginConfig.enableDebugLog.Value)
+                {
+                    Logger.LogError($"Stack trace: {ex.StackTrace}");
                 }
             }
-            
-            logger.LogInfo($"Total images loaded for {paintingGroup.paintingType}: {paintingGroup.loadedMaterials.Count}");
         }
+
+        Logger.LogInfo($"Total Images for group [{paintingType}] : [{InPaintingGroup.loadedMaterials.Count}]");
+    }
+
+    // Helper method to log material properties for debugging
+    private void LogMaterialProperties(Material material)
+    {
+        if (material == null) return;
+        
+        Logger.LogInfo($"Material '{material.name}' properties:");
+        Logger.LogInfo($"  Shader: {material.shader.name}");
+        
+        // Log color properties
+        if (material.HasProperty(PROP_BASE_COLOR))
+        {
+            Color baseColor = material.GetColor(PROP_BASE_COLOR);
+            Logger.LogInfo($"  {PROP_BASE_COLOR}: {ColorToString(baseColor)}");
+        }
+        
+        if (material.HasProperty(PROP_MAIN_COLOR))
+        {
+            Color mainColor = material.GetColor(PROP_MAIN_COLOR);
+            Logger.LogInfo($"  {PROP_MAIN_COLOR}: {ColorToString(mainColor)}");
+        }
+        
+        if (material.HasProperty(PROP_CRACKS_COLOR))
+        {
+            Color cracksColor = material.GetColor(PROP_CRACKS_COLOR);
+            Logger.LogInfo($"  {PROP_CRACKS_COLOR}: {ColorToString(cracksColor)}");
+        }
+        
+        if (material.HasProperty(PROP_OUTLINE_COLOR))
+        {
+            Color outlineColor = material.GetColor(PROP_OUTLINE_COLOR);
+            Logger.LogInfo($"  {PROP_OUTLINE_COLOR}: {ColorToString(outlineColor)}");
+        }
+        
+        // Log float properties
+        if (material.HasProperty(PROP_CRACKS_POWER))
+        {
+            float cracksPower = material.GetFloat(PROP_CRACKS_POWER);
+            Logger.LogInfo($"  {PROP_CRACKS_POWER}: {cracksPower}");
+        }
+    }
+
+    // Helper method to convert Color to a readable string
+    private string ColorToString(Color color)
+    {
+        return $"RGBA({color.r:F2}, {color.g:F2}, {color.b:F2}, {color.a:F2}) Hex: {ColorUtility.ToHtmlStringRGBA(color)}";
+    }
 
         private Material CreateStandardMaterial(Texture2D texture)
         {

@@ -1,8 +1,8 @@
 {
   "name": "YetAnotherRandomPaintingSwap",
-  "version_number": "1.0.0",
+  "version_number": "1.1.0",
   "website_url": "https://github.com/snowtyler/YetAnotherRandomPaintingSwap",
-  "description": "Randomize paintings throughout the game with custom images, proper sizing, network syncing and optional grunge textures.",
+  "description": "Randomize paintings throughout the game with custom images — supports square/portrait/landscape images and multiplayer sync. Optional grunge textures.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2100"
   ]
